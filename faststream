@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v1.8.0 - Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Renamer CLI
+⚡ FastStream v1.9.0 - Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Renamer CLI
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
 Features:
-- Clean & Silent Console Output (Zero BrokenPipe/ConnectionReset noise on video seek/close)
+- Universal Search: Text Title, Year, TMDB ID, or IMDb ID (e.g. tt3495184 or IMDb URL)
+- Clean & Silent Console Output (Zero BrokenPipe/ConnectionReset noise)
 - Native Favicon Handling (Zero 404 clutter)
 - Web Remote Shutdown (1-Click button to stop server & release port directly from browser)
 - Pure-Python Terminal QR Code Generator (Zero external binaries required)
@@ -16,7 +17,7 @@ Features:
 - Instant HTTP 206 Partial Content Byte-Range Video Streaming
 - Configurable TMDB API Key (CLI flag, ENV var, or ~/.config/faststream/config.json)
 - Automatic TMDB Poster & Backdrop Enrichment
-- Interactive Manual TMDB Search & Correction Modal
+- Interactive Manual Search & Correction Modal (with IMDb ID direct lookup)
 - 1-Click Atomic Jellyfin Standard Renaming (`Title (Year) [tmdbid-ID].mp4`)
 - Glassmorphic Web Player UI
 """
@@ -130,7 +131,7 @@ class PureTerminalQR:
             ver = 4; size = 33; total_cw = 100; ec_cw = 20
 
         data_cap = total_cw - ec_cw
-        bits = [0, 1, 0, 0] # Byte mode
+        bits = [0, 1, 0, 0]
         for i in range(7, -1, -1):
             bits.append((length >> i) & 1)
         for b in data_bytes:
@@ -286,8 +287,12 @@ VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.ts', '.m4v', '.webm'}
 
 def clean_search_title(fname):
     name = os.path.splitext(os.path.basename(fname))[0]
+    
     tmdb_match = re.search(r'\[tmdbid-(\d+)\]', name)
     tmdb_id = tmdb_match.group(1) if tmdb_match else None
+    
+    imdb_match = re.search(r'\[imdbid-(tt\d+)\]|(tt\d{7,})', name)
+    imdb_id = imdb_match.group(1) or imdb_match.group(2) if imdb_match else None
     
     y_match = re.search(r'\((\d{4})\)', name)
     year = y_match.group(1) if y_match else None
@@ -296,17 +301,66 @@ def clean_search_title(fname):
     clean = re.sub(r'1080p|720p|480p|x264|x265|hevc|bluray|dvdrip|web-dl|webrip|latino|dual|castellano', '', clean, flags=re.I)
     clean = re.sub(r'[-_.]', ' ', clean).strip()
     clean = re.sub(r'\s+', ' ', clean)
-    return clean, year, tmdb_id
+    return clean, year, tmdb_id, imdb_id
 
 def query_tmdb_search(query, year=None, api_key=None):
     key = api_key or get_tmdb_api_key()
     if not key or not query:
         return []
+    
+    query = query.strip()
+    
+    # 1. ¿Es un ID de IMDb (ttXXXXXXX o URL de IMDb)?
+    imdb_match = re.search(r'(tt\d{6,})', query)
+    if imdb_match:
+        imdb_id = imdb_match.group(1)
+        try:
+            url = f"https://api.themoviedb.org/3/find/{imdb_id}?api_key={key}&external_source=imdb_id&language=es-MX"
+            req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.9"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode())
+                results = data.get("movie_results", []) + data.get("tv_results", [])
+                items = []
+                for m in results:
+                    items.append({
+                        "id": m.get("id"),
+                        "imdb_id": imdb_id,
+                        "title": m.get("title") or m.get("name"),
+                        "original_title": m.get("original_title") or m.get("original_name"),
+                        "year": (m.get("release_date") or m.get("first_air_date") or "")[:4] or "N/A",
+                        "overview": m.get("overview") or "Sin sinopsis disponible.",
+                        "poster_url": f"https://image.tmdb.org/t/p/w300{m.get('poster_path')}" if m.get("poster_path") else None,
+                        "backdrop_url": f"https://image.tmdb.org/t/p/original{m.get('backdrop_path')}" if m.get("backdrop_path") else None,
+                        "rating": f"{m.get('vote_average'):.1f}" if m.get("vote_average") else "N/A"
+                    })
+                if items:
+                    return items
+        except Exception:
+            pass
+
+    # 2. ¿Es un TMDB ID directo (número puro o tmdbid-XXXX)?
+    tmdb_direct = re.search(r'^(?:tmdbid-)?(\d+)$', query)
+    if tmdb_direct:
+        tid = tmdb_direct.group(1)
+        m = fetch_tmdb_by_id(tid, key)
+        if m and m.get("tmdb_id"):
+            return [{
+                "id": m.get("tmdb_id"),
+                "title": m.get("title"),
+                "original_title": m.get("title"),
+                "year": (m.get("release_date") or "")[:4] or "N/A",
+                "overview": m.get("overview") or "Sin sinopsis disponible.",
+                "poster_url": m.get("poster_url"),
+                "backdrop_url": m.get("backdrop_url"),
+                "rating": f"{m.get('vote_average'):.1f}" if m.get("vote_average") else "N/A"
+            }]
+
+    # 3. Búsqueda por texto estándar
     try:
         url = f"https://api.themoviedb.org/3/search/movie?api_key={key}&query={urllib.parse.quote(query)}&language=es-MX"
         if year:
             url += f"&year={year}"
-        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.8"})
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.9"})
         with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode())
             results = data.get("results", [])
@@ -330,11 +384,12 @@ def fetch_tmdb_by_id(tmdb_id, api_key=None):
     key = api_key or get_tmdb_api_key()
     try:
         url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={key}&language=es-MX"
-        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.8"})
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.9"})
         with urllib.request.urlopen(req, timeout=4) as resp:
             m = json.loads(resp.read().decode())
             return {
                 "tmdb_id": m.get("id"),
+                "imdb_id": m.get("imdb_id"),
                 "title": m.get("title"),
                 "overview": m.get("overview"),
                 "release_date": m.get("release_date"),
@@ -378,7 +433,7 @@ def parse_mp4_atoms_pure_python(file_path):
 
 def get_file_metadata(file_path, api_key=None):
     raw_fname = os.path.basename(file_path)
-    clean_t, yr, tmdb_id = clean_search_title(raw_fname)
+    clean_t, yr, tmdb_id, imdb_id = clean_search_title(raw_fname)
     
     title = clean_t
     duration_str = "N/A"
@@ -426,6 +481,12 @@ def get_file_metadata(file_path, api_key=None):
     tmdb = {}
     if tmdb_id:
         tmdb = fetch_tmdb_by_id(tmdb_id, api_key)
+    elif imdb_id:
+        im_res = query_tmdb_search(imdb_id, None, api_key)
+        if im_res:
+            tmdb = im_res[0]
+            tmdb['poster_url'] = f"https://image.tmdb.org/t/p/w500{tmdb['poster_url'].split('/')[-1]}" if tmdb.get('poster_url') else None
+    
     if not tmdb:
         search_year = yr or tags_date
         search_res = query_tmdb_search(clean_t, search_year, api_key)
@@ -447,7 +508,7 @@ def get_file_metadata(file_path, api_key=None):
         'backdrop_url': tmdb.get('backdrop_url'),
         'rating': f"⭐ {tmdb.get('vote_average'):.1f}/10" if tmdb.get('vote_average') else (f"⭐ {tmdb.get('rating')}/10" if tmdb.get('rating') and tmdb.get('rating') != "N/A" else None),
         'year': tmdb.get('release_date', '')[:4] if tmdb.get('release_date') else (tmdb.get('year') or yr),
-        'tmdb_id': tmdb.get('id') or tmdb_id
+        'tmdb_id': tmdb.get('id') or tmdb_id or tmdb.get('tmdb_id')
     }
 
 def generate_player_html(target_path, meta, is_dir=False, file_list=None):
@@ -726,7 +787,7 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             border: 1px solid #334155;
             border-radius: 16px;
             width: 100%;
-            max-width: 750px;
+            max-width: 780px;
             max-height: 90vh;
             overflow-y: auto;
             padding: 24px;
@@ -758,9 +819,11 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
         .search-box {{
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
         }}
         .search-input {{
             flex-grow: 1;
+            min-width: 200px;
             background: #1e293b;
             border: 1px solid #334155;
             padding: 12px 16px;
@@ -890,13 +953,13 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
     <div id="searchModal" class="modal-overlay">
         <div class="modal-card">
             <div class="modal-header">
-                <h2>🔍 Buscar Metadatos y Renombrar a Jellyfin</h2>
+                <h2>🔍 Buscar por Título, TMDB ID o IMDb ID (ttXXXXXXX)</h2>
                 <button class="close-btn" onclick="closeSearchModal()">✕</button>
             </div>
-            <p style="color:#94a3b8; font-size:13px; margin:0;">Escribe el título exacto o año para buscar en TMDB y sugerir el estándar <code>Título (Año) [tmdbid-ID].mp4</code>:</p>
+            <p style="color:#94a3b8; font-size:13px; margin:0;">Puedes escribir el <b>título</b>, el <b>ID de IMDb</b> (ej. <code>tt3495184</code> o enlace de IMDb), o el <b>TMDB ID</b>:</p>
             <div class="search-box">
-                <input type="text" id="searchInput" class="search-input" value="{meta['clean_title']}" placeholder="Buscar en TMDB...">
-                <input type="text" id="yearInput" class="search-input" style="max-width:100px;" value="{meta['year'] or ''}" placeholder="Año...">
+                <input type="text" id="searchInput" class="search-input" value="{meta['clean_title']}" placeholder="Título, ID de IMDb (tt1234567) o TMDB ID...">
+                <input type="text" id="yearInput" class="search-input" style="max-width:90px;" value="{meta['year'] or ''}" placeholder="Año...">
                 <button class="search-btn" onclick="performTMDBSearch()">Buscar</button>
             </div>
             <div id="resultsContainer" class="results-list"></div>
@@ -916,13 +979,13 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             const query = document.getElementById('searchInput').value.trim();
             const year = document.getElementById('yearInput').value.trim();
             const container = document.getElementById('resultsContainer');
-            container.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:20px;">🔍 Buscando en TMDB...</div>';
+            container.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:20px;">🔍 Consultando base de datos cinematográfica...</div>';
             
             try {{
                 const res = await fetch(`/api/search?q=${{encodeURIComponent(query)}}&year=${{encodeURIComponent(year)}}`);
                 const results = await res.json();
                 if (!results.length) {{
-                    container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">❌ No se encontraron resultados en TMDB. Intenta con otro término.</div>';
+                    container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">❌ No se encontraron resultados. Prueba ingresando el IMDb ID (ej: tt3495184).</div>';
                     return;
                 }}
                 
@@ -938,7 +1001,7 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
                         ${{poster}}
                         <div class="result-details">
                             <div class="result-title">${{m.title}} <span style="color:#94a3b8; font-weight:normal;">(${{m.year}})</span> ⭐ ${{m.rating}}</div>
-                            <div class="result-sub">ID TMDB: ${{m.id}} | Original: <i>${{m.original_title}}</i></div>
+                            <div class="result-sub">TMDB ID: ${{m.id}} ${{m.imdb_id ? '| IMDb: ' + m.imdb_id : ''}} | Original: <i>${{m.original_title}}</i></div>
                             <div class="result-desc">${{m.overview}}</div>
                             <div class="jellyfin-suggestion">🏷️ Sugerencia Jellyfin: <b>${{jellyfinName}}</b></div>
                         </div>
@@ -947,7 +1010,7 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
                 }});
                 container.innerHTML = html;
             }} catch(e) {{
-                container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">❌ Error de conexión al consultar TMDB.</div>';
+                container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">❌ Error de conexión al consultar metadatos.</div>';
             }}
         }}
 
@@ -1023,12 +1086,10 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     is_shutting_down = False
 
     class FastStreamHandler(http.server.BaseHTTPRequestHandler):
-        # Silenciar logs ruidosos de requests regulares
         def log_message(self, format, *args):
             if verbose:
                 super().log_message(format, *args)
             else:
-                # Solo loguear acciones importantes (como renombrado o shutdown)
                 req_line = args[0] if args else ""
                 if "POST /api" in req_line or "GET /api" in req_line:
                     super().log_message(format, *args)
@@ -1052,7 +1113,6 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
             nonlocal current_file, abs_target, meta
             parsed = urllib.parse.urlparse(self.path)
             
-            # Silenciar favicon
             if parsed.path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()
@@ -1145,7 +1205,6 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                                 if not buf: break
                                 self.wfile.write(buf)
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                    # El navegador canceló la petición previa para pedir otro fragmento (normal en streaming)
                     pass
                 return
 
@@ -1155,7 +1214,6 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
             nonlocal current_file, abs_target, meta, is_shutting_down
             parsed = urllib.parse.urlparse(self.path)
             
-            # API DE APAGADO REMOTO DESDE NAVEGADOR
             if parsed.path == "/api/shutdown":
                 with shutdown_lock:
                     if is_shutting_down:
@@ -1179,7 +1237,6 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 threading.Thread(target=trigger_exit, daemon=True).start()
                 return
 
-            # API DE RENOMBRADO JELLYFIN
             if parsed.path == "/api/rename":
                 length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(length)
@@ -1226,7 +1283,6 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     class SilentTCPServer(socketserver.TCPServer):
         allow_reuse_address = True
         
-        # Suprimir trazas ruidosas de desconexiones normales de socket en el navegador
         def handle_error(self, request, client_address):
             exc_type, exc_val, _ = sys.exc_info()
             if exc_type in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -1244,7 +1300,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v1.8 - STREAMING Y AUDITORÍA DE MEDIOS")
+    print(f"⚡ FASTSTREAM v1.9 - STREAMING Y AUDITORÍA DE MEDIOS")
     print("="*70)
     print(f"🎬 Título:   {meta['title']} ({meta.get('year') or 'N/A'})")
     print(f"📂 Archivo:  {abs_target}")
