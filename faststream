@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""
+⚡ FastStream - Zero-Dependency Instant HTTP Range Video Streamer CLI
+Author: Edward Castillo (FastMovie Team)
+License: MIT
+
+Usage:
+    faststream <path_to_video_or_directory> [--port PORT]
+"""
+
+import sys, os, socket, http.server, socketserver, argparse, urllib.parse, json, subprocess
+
+def get_lan_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+def print_qr_terminal(url):
+    try:
+        # Si qrencode está instalado
+        res = subprocess.run(["qrencode", "-t", "UTF8", url], capture_output=True, text=True)
+        if res.returncode == 0:
+            print("\n📱 Escanea con tu teléfono o tablet para abrir al instante:\n")
+            print(res.stdout)
+    except Exception:
+        pass
+
+VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.ts', '.m4v', '.webm'}
+
+def get_file_metadata(file_path):
+    cmd = ['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-of', 'json', file_path]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+        if res.returncode == 0:
+            data = json.loads(res.stdout)
+            fmt = data.get('format', {})
+            duration_sec = float(fmt.get('duration', 0))
+            tags = fmt.get('tags', {})
+            title = tags.get('title', os.path.splitext(os.path.basename(file_path))[0])
+            
+            v_stream = next((s for s in data.get('streams', []) if s.get('codec_type') == 'video'), None)
+            res_str = f"{v_stream.get('width')}x{v_stream.get('height')}" if v_stream else "N/A"
+            v_codec = v_stream.get('codec_name', 'N/A') if v_stream else "N/A"
+            
+            a_streams = [s for s in data.get('streams', []) if s.get('codec_type') == 'audio']
+            a_summary = ", ".join([f"{a.get('tags', {}).get('language', 'und')}({a.get('codec_name')})" for a in a_streams])
+            
+            return {
+                'title': title,
+                'duration': f"{int(duration_sec // 60)} min {int(duration_sec % 60)} seg" if duration_sec else "N/A",
+                'resolution': res_str,
+                'codec': v_codec,
+                'audio': a_summary or "Stereo",
+                'size_mb': f"{os.path.getsize(file_path)/(1024*1024):.1f} MB",
+                'description': tags.get('description') or tags.get('comment') or ""
+            }
+    except Exception:
+        pass
+    
+    return {
+        'title': os.path.splitext(os.path.basename(file_path))[0],
+        'duration': "N/A",
+        'resolution': "N/A",
+        'codec': "N/A",
+        'audio': "N/A",
+        'size_mb': f"{os.path.getsize(file_path)/(1024*1024):.1f} MB",
+        'description': ""
+    }
+
+def generate_player_html(target_path, meta, is_dir=False, file_list=None):
+    if is_dir:
+        items_html = ""
+        for idx, f in enumerate(file_list):
+            name = os.path.basename(f)
+            sz = f"{os.path.getsize(f)/(1024*1024):.1f} MB"
+            items_html += f"""
+            <a href="/play?index={idx}" class="item-card">
+                <div class="item-title">🎬 {name}</div>
+                <div class="item-meta">{sz}</div>
+            </a>"""
+            
+        return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ FastStream - Explorador de Medios</title>
+    <style>
+        body {{ margin:0; padding:20px; background:#0b0f19; color:#f8fafc; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }}
+        .container {{ max-width:800px; margin:0 auto; }}
+        h1 {{ color:#e50914; margin-bottom:4px; font-size:24px; }}
+        p {{ color:#94a3b8; font-size:14px; margin-top:0; }}
+        .list {{ display:flex; flex-direction:column; gap:8px; margin-top:20px; }}
+        .item-card {{ display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:14px 18px; border-radius:8px; text-decoration:none; color:#f8fafc; border:1px solid #334155; transition:all 0.2s; }}
+        .item-card:hover {{ background:#334155; transform:translateX(4px); border-color:#e50914; }}
+        .item-title {{ font-weight:600; font-size:15px; }}
+        .item-meta {{ font-size:12px; color:#94a3b8; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ FastStream Media Hub</h1>
+        <p>Carpeta compartida: <b>{os.path.basename(target_path)}</b> ({len(file_list)} archivos)</p>
+        <div class="list">{items_html}</div>
+    </div>
+</body>
+</html>"""
+
+    fname = os.path.basename(target_path)
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ {meta['title']} - FastStream</title>
+    <style>
+        body {{ margin:0; padding:0; background:#07090e; color:#f8fafc; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; }}
+        .header {{ text-align:center; margin-bottom:18px; max-width:900px; padding:0 15px; }}
+        h1 {{ margin:0 0 6px 0; font-size:24px; color:#e50914; }}
+        .meta-tags {{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:8px; }}
+        .badge {{ background:#1e293b; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:600; color:#38bdf8; border:1px solid #334155; }}
+        .desc {{ font-size:13px; color:#94a3b8; margin-top:10px; line-height:1.4; }}
+        .player-container {{ width:92%; max-width:1080px; background:#000; border-radius:12px; overflow:hidden; box-shadow:0 15px 40px rgba(0,0,0,0.9); border:1px solid #1e293b; }}
+        video {{ width:100%; display:block; outline:none; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{meta['title']}</h1>
+        <div class="meta-tags">
+            <span class="badge">⏱️ {meta['duration']}</span>
+            <span class="badge">📺 {meta['resolution']} ({meta['codec']})</span>
+            <span class="badge">🎵 {meta['audio']}</span>
+            <span class="badge">📦 {meta['size_mb']}</span>
+        </div>
+        {f'<div class="desc">{meta["description"]}</div>' if meta.get("description") else ''}
+    </div>
+    <div class="player-container">
+        <video controls autoplay playsinline preload="metadata">
+            <source src="/video" type="video/mp4">
+            Navegador no compatible con video HTML5.
+        </video>
+    </div>
+</body>
+</html>"""
+
+def run_faststream(target, port=8090):
+    abs_target = os.path.abspath(target)
+    if not os.path.exists(abs_target):
+        print(f"❌ Error: La ruta '{target}' no existe.")
+        sys.exit(1)
+        
+    is_dir = os.path.isdir(abs_target)
+    file_list = []
+    current_file = abs_target
+    
+    if is_dir:
+        for root, _, files in os.walk(abs_target):
+            for f in sorted(files):
+                ext = os.path.splitext(f)[1].lower()
+                if ext in VIDEO_EXTS and not f.startswith('.'):
+                    file_list.append(os.path.join(root, f))
+        if not file_list:
+            print(f"❌ No se encontraron archivos de video en '{target}'.")
+            sys.exit(1)
+        current_file = file_list[0]
+        meta = get_file_metadata(current_file)
+    else:
+        meta = get_file_metadata(abs_target)
+
+    class FastStreamHandler(http.server.BaseHTTPRequestHandler):
+        def do_HEAD(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html" if not self.path.startswith("/video") else "video/mp4")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+
+        def do_GET(self):
+            nonlocal current_file
+            parsed = urllib.parse.urlparse(self.path)
+            
+            if parsed.path == "/" or parsed.path == "/index.html":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                html = generate_player_html(abs_target, meta, is_dir=is_dir, file_list=file_list)
+                self.wfile.write(html.encode("utf-8"))
+                return
+                
+            if parsed.path == "/play":
+                query = urllib.parse.parse_qs(parsed.query)
+                idx = int(query.get("index", ["0"])[0])
+                if 0 <= idx < len(file_list):
+                    current_file = file_list[idx]
+                    fmeta = get_file_metadata(current_file)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    html = generate_player_html(current_file, fmeta, is_dir=False)
+                    self.wfile.write(html.encode("utf-8"))
+                return
+
+            if parsed.path == "/video":
+                if not os.path.exists(current_file):
+                    self.send_error(404, "Archivo no encontrado")
+                    return
+                    
+                file_sz = os.path.getsize(current_file)
+                range_header = self.headers.get("Range")
+                
+                if range_header:
+                    try:
+                        rng = range_header.strip().split("=")[1].split("-")
+                        start = int(rng[0])
+                        end = int(rng[1]) if rng[1] else file_sz - 1
+                    except:
+                        start, end = 0, file_sz - 1
+                        
+                    chunk_sz = end - start + 1
+                    self.send_response(206)
+                    self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{file_sz}")
+                    self.send_header("Content-Length", str(chunk_sz))
+                    self.end_headers()
+                    
+                    with open(current_file, "rb") as f:
+                        f.seek(start)
+                        rem = chunk_sz
+                        while rem > 0:
+                            buf = f.read(min(rem, 64*1024))
+                            if not buf: break
+                            self.wfile.write(buf)
+                            rem -= len(buf)
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Length", str(file_sz))
+                    self.end_headers()
+                    with open(current_file, "rb") as f:
+                        while True:
+                            buf = f.read(64*1024)
+                            if not buf: break
+                            self.wfile.write(buf)
+                return
+
+            self.send_error(404)
+
+    class ReusableTCPServer(socketserver.TCPServer):
+        allow_reuse_address = True
+
+    lan_ip = get_lan_ip()
+    stream_url = f"http://{lan_ip}:{port}/"
+    
+    print("\n" + "="*70)
+    print(f"⚡ FASTSTREAM ACTIVO - STREAMING HTTP EN TIEMPO REAL")
+    print("="*70)
+    print(f"📂 Archivo / Carpeta: {abs_target}")
+    print(f"🌐 URL de Acceso Local: \033[1;32m{stream_url}\033[0m")
+    print(f"🖥️  En esta máquina:   http://localhost:{port}/")
+    print_qr_terminal(stream_url)
+    print("="*70)
+    print("💡 Presiona Ctrl + C para detener el servidor en cualquier momento.\n")
+    
+    try:
+        with ReusableTCPServer(("0.0.0.0", port), FastStreamHandler) as httpd:
+            httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 Servidor FastStream detenido correctamente.")
+        sys.exit(0)
+
+def main():
+    parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante en tu red local.")
+    parser.add_argument("target", help="Ruta al archivo de video o carpeta a transmitir.")
+    parser.add_argument("-p", "--port", type=int, default=8090, help="Puerto HTTP (por defecto: 8090).")
+    args = parser.parse_args()
+    
+    run_faststream(args.target, args.port)
+
+if __name__ == "__main__":
+    main()
