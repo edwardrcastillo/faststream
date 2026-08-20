@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v1.7.0 - Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Renamer CLI
+⚡ FastStream v1.8.0 - Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Renamer CLI
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
 Features:
+- Clean & Silent Console Output (Zero BrokenPipe/ConnectionReset noise on video seek/close)
+- Native Favicon Handling (Zero 404 clutter)
 - Web Remote Shutdown (1-Click button to stop server & release port directly from browser)
 - Pure-Python Terminal QR Code Generator (Zero external binaries required)
 - Smart Auto-Port Discovery (Auto-allocates next free port 8090, 8091, 8092... if busy)
@@ -304,7 +306,7 @@ def query_tmdb_search(query, year=None, api_key=None):
         url = f"https://api.themoviedb.org/3/search/movie?api_key={key}&query={urllib.parse.quote(query)}&language=es-MX"
         if year:
             url += f"&year={year}"
-        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.7"})
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.8"})
         with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode())
             results = data.get("results", [])
@@ -328,7 +330,7 @@ def fetch_tmdb_by_id(tmdb_id, api_key=None):
     key = api_key or get_tmdb_api_key()
     try:
         url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={key}&language=es-MX"
-        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.7"})
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.8"})
         with urllib.request.urlopen(req, timeout=4) as resp:
             m = json.loads(resp.read().decode())
             return {
@@ -496,19 +498,20 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
         <div class="list">{items_html}</div>
     </div>
     <script>
+        let isShuttingDown = false;
         async function remoteShutdown() {{
+            if (isShuttingDown) return;
             if (!confirm("¿Deseas apagar el servidor FastStream y liberar el puerto?")) return;
+            isShuttingDown = true;
             try {{
-                const res = await fetch('/api/shutdown', {{ method: 'POST' }});
-                document.body.innerHTML = `
-                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; text-align:center; color:#f8fafc;">
-                    <h1 style="color:#10b981; font-size:32px;">🔌 Servidor Detenido</h1>
-                    <p style="color:#94a3b8; font-size:16px;">El servidor FastStream se apagó y el puerto fue liberado correctamente.</p>
-                    <p style="color:#64748b; font-size:13px;">Ya puedes cerrar esta pestaña del navegador.</p>
-                </div>`;
-            }} catch(e) {{
-                alert("Servidor detenido.");
-            }}
+                await fetch('/api/shutdown', {{ method: 'POST' }});
+            }} catch(e) {{}}
+            document.body.innerHTML = `
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; text-align:center; color:#f8fafc;">
+                <h1 style="color:#10b981; font-size:32px;">🔌 Servidor Detenido</h1>
+                <p style="color:#94a3b8; font-size:16px;">El servidor FastStream se apagó y el puerto fue liberado correctamente.</p>
+                <p style="color:#64748b; font-size:13px;">Ya puedes cerrar esta pestaña del navegador.</p>
+            </div>`;
         }}
     </script>
 </body>
@@ -972,25 +975,26 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             }}
         }}
 
+        let isShuttingDown = false;
         async function remoteShutdown() {{
+            if (isShuttingDown) return;
             if (!confirm("¿Deseas apagar el servidor FastStream y liberar el puerto?")) return;
+            isShuttingDown = true;
             try {{
-                const res = await fetch('/api/shutdown', {{ method: 'POST' }});
-                document.body.innerHTML = `
-                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; text-align:center; color:#f8fafc;">
-                    <h1 style="color:#10b981; font-size:32px;">🔌 Servidor Detenido</h1>
-                    <p style="color:#94a3b8; font-size:16px;">El servidor FastStream se apagó y el puerto fue liberado correctamente.</p>
-                    <p style="color:#64748b; font-size:13px;">Ya puedes cerrar esta pestaña del navegador.</p>
-                </div>`;
-            }} catch(e) {{
-                alert("Servidor detenido.");
-            }}
+                await fetch('/api/shutdown', {{ method: 'POST' }});
+            }} catch(e) {{}}
+            document.body.innerHTML = `
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; text-align:center; color:#f8fafc;">
+                <h1 style="color:#10b981; font-size:32px;">🔌 Servidor Detenido</h1>
+                <p style="color:#94a3b8; font-size:16px;">El servidor FastStream se apagó y el puerto fue liberado correctamente.</p>
+                <p style="color:#64748b; font-size:13px;">Ya puedes cerrar esta pestaña del navegador.</p>
+            </div>`;
         }}
     </script>
 </body>
 </html>"""
 
-def run_faststream(target, requested_port=None, api_key=None):
+def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     abs_target = os.path.abspath(target)
     if not os.path.exists(abs_target):
         print(f"❌ Error: La ruta '{target}' no existe.")
@@ -1015,10 +1019,25 @@ def run_faststream(target, requested_port=None, api_key=None):
         print("🔍 Consultando metadatos iniciales...")
         meta = get_file_metadata(abs_target, api_key)
 
-    httpd = None
+    shutdown_lock = threading.Lock()
+    is_shutting_down = False
 
     class FastStreamHandler(http.server.BaseHTTPRequestHandler):
+        # Silenciar logs ruidosos de requests regulares
+        def log_message(self, format, *args):
+            if verbose:
+                super().log_message(format, *args)
+            else:
+                # Solo loguear acciones importantes (como renombrado o shutdown)
+                req_line = args[0] if args else ""
+                if "POST /api" in req_line or "GET /api" in req_line:
+                    super().log_message(format, *args)
+
         def do_HEAD(self):
+            if self.path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return
             if self.path.startswith("/video"):
                 self.send_response(200)
                 self.send_header("Content-Type", "video/mp4")
@@ -1033,6 +1052,12 @@ def run_faststream(target, requested_port=None, api_key=None):
             nonlocal current_file, abs_target, meta
             parsed = urllib.parse.urlparse(self.path)
             
+            # Silenciar favicon
+            if parsed.path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return
+
             if parsed.path == "/api/search":
                 qs = urllib.parse.parse_qs(parsed.query)
                 q = qs.get("q", [""])[0]
@@ -1041,7 +1066,10 @@ def run_faststream(target, requested_port=None, api_key=None):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(json.dumps(results, ensure_ascii=False).encode("utf-8"))
+                try:
+                    self.wfile.write(json.dumps(results, ensure_ascii=False).encode("utf-8"))
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
                 return
 
             if parsed.path == "/" or parsed.path == "/index.html":
@@ -1050,7 +1078,10 @@ def run_faststream(target, requested_port=None, api_key=None):
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
                 html = generate_player_html(current_file, meta, is_dir=is_dir, file_list=file_list)
-                self.wfile.write(html.encode("utf-8"))
+                try:
+                    self.wfile.write(html.encode("utf-8"))
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
                 return
                 
             if parsed.path == "/play":
@@ -1063,7 +1094,10 @@ def run_faststream(target, requested_port=None, api_key=None):
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.end_headers()
                     html = generate_player_html(current_file, meta, is_dir=False)
-                    self.wfile.write(html.encode("utf-8"))
+                    try:
+                        self.wfile.write(html.encode("utf-8"))
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        pass
                 return
 
             if parsed.path == "/video":
@@ -1074,61 +1108,73 @@ def run_faststream(target, requested_port=None, api_key=None):
                 file_sz = os.path.getsize(current_file)
                 range_header = self.headers.get("Range")
                 
-                if range_header:
-                    try:
-                        rng = range_header.strip().split("=")[1].split("-")
-                        start = int(rng[0])
-                        end = int(rng[1]) if rng[1] else file_sz - 1
-                    except:
-                        start, end = 0, file_sz - 1
+                try:
+                    if range_header:
+                        try:
+                            rng = range_header.strip().split("=")[1].split("-")
+                            start = int(rng[0])
+                            end = int(rng[1]) if rng[1] else file_sz - 1
+                        except:
+                            start, end = 0, file_sz - 1
+                            
+                        chunk_sz = end - start + 1
+                        self.send_response(206)
+                        self.send_header("Content-Type", "video/mp4")
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.send_header("Content-Range", f"bytes {start}-{end}/{file_sz}")
+                        self.send_header("Content-Length", str(chunk_sz))
+                        self.end_headers()
                         
-                    chunk_sz = end - start + 1
-                    self.send_response(206)
-                    self.send_header("Content-Type", "video/mp4")
-                    self.send_header("Accept-Ranges", "bytes")
-                    self.send_header("Content-Range", f"bytes {start}-{end}/{file_sz}")
-                    self.send_header("Content-Length", str(chunk_sz))
-                    self.end_headers()
-                    
-                    with open(current_file, "rb") as f:
-                        f.seek(start)
-                        rem = chunk_sz
-                        while rem > 0:
-                            buf = f.read(min(rem, 64*1024))
-                            if not buf: break
-                            self.wfile.write(buf)
-                            rem -= len(buf)
-                else:
-                    self.send_response(200)
-                    self.send_header("Content-Type", "video/mp4")
-                    self.send_header("Accept-Ranges", "bytes")
-                    self.send_header("Content-Length", str(file_sz))
-                    self.end_headers()
-                    with open(current_file, "rb") as f:
-                        while True:
-                            buf = f.read(64*1024)
-                            if not buf: break
-                            self.wfile.write(buf)
+                        with open(current_file, "rb") as f:
+                            f.seek(start)
+                            rem = chunk_sz
+                            while rem > 0:
+                                buf = f.read(min(rem, 64*1024))
+                                if not buf: break
+                                self.wfile.write(buf)
+                                rem -= len(buf)
+                    else:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "video/mp4")
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.send_header("Content-Length", str(file_sz))
+                        self.end_headers()
+                        with open(current_file, "rb") as f:
+                            while True:
+                                buf = f.read(64*1024)
+                                if not buf: break
+                                self.wfile.write(buf)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    # El navegador canceló la petición previa para pedir otro fragmento (normal en streaming)
+                    pass
                 return
 
             self.send_error(404)
 
         def do_POST(self):
-            nonlocal current_file, abs_target, meta
+            nonlocal current_file, abs_target, meta, is_shutting_down
             parsed = urllib.parse.urlparse(self.path)
             
             # API DE APAGADO REMOTO DESDE NAVEGADOR
             if parsed.path == "/api/shutdown":
+                with shutdown_lock:
+                    if is_shutting_down:
+                        return
+                    is_shutting_down = True
+                
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(json.dumps({"success": True, "message": "Servidor apagado exitosamente."}).encode('utf-8'))
+                try:
+                    self.wfile.write(json.dumps({"success": True, "message": "Servidor apagado exitosamente."}).encode('utf-8'))
+                except Exception:
+                    pass
                 
-                print("\n🛑 Solicitud de apagado remoto recibida desde el navegador.")
+                print("\n🛑 Solicitud de apagado recibida desde el navegador.")
                 print("🔌 Cerrando FastStream y liberando puerto...")
                 
                 def trigger_exit():
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                     os._exit(0)
                 threading.Thread(target=trigger_exit, daemon=True).start()
                 return
@@ -1177,8 +1223,15 @@ def run_faststream(target, requested_port=None, api_key=None):
 
             self.send_error(404)
 
-    class ReusableTCPServer(socketserver.TCPServer):
+    class SilentTCPServer(socketserver.TCPServer):
         allow_reuse_address = True
+        
+        # Suprimir trazas ruidosas de desconexiones normales de socket en el navegador
+        def handle_error(self, request, client_address):
+            exc_type, exc_val, _ = sys.exc_info()
+            if exc_type in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
+            super().handle_error(request, client_address)
 
     is_explicit = requested_port is not None
     base_port = requested_port or 8090
@@ -1191,7 +1244,7 @@ def run_faststream(target, requested_port=None, api_key=None):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v1.7 - STREAMING Y AUDITORÍA DE MEDIOS")
+    print(f"⚡ FASTSTREAM v1.8 - STREAMING Y AUDITORÍA DE MEDIOS")
     print("="*70)
     print(f"🎬 Título:   {meta['title']} ({meta.get('year') or 'N/A'})")
     print(f"📂 Archivo:  {abs_target}")
@@ -1205,7 +1258,7 @@ def run_faststream(target, requested_port=None, api_key=None):
     print("💡 Presiona Ctrl + C o pulsa '🛑 Apagar' en el navegador para detener.\n")
     
     try:
-        with ReusableTCPServer(("0.0.0.0", final_port), FastStreamHandler) as httpd:
+        with SilentTCPServer(("0.0.0.0", final_port), FastStreamHandler) as httpd:
             httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n🛑 Servidor FastStream detenido correctamente.")
@@ -1215,6 +1268,7 @@ def main():
     parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante en tu red local.")
     parser.add_argument("target", nargs="?", help="Ruta al archivo de video o carpeta a transmitir.")
     parser.add_argument("-p", "--port", type=int, default=None, help="Puerto HTTP específico (por defecto: 8090 o el siguiente puerto libre).")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Mostrar logs detallados de todas las peticiones HTTP.")
     parser.add_argument("--tmdb-key", help="Clave de API de TheMovieDB a usar.")
     parser.add_argument("--set-tmdb-key", help="Guardar tu clave de API de TMDB en ~/.config/faststream/config.json permanentemente.")
     args = parser.parse_args()
@@ -1228,7 +1282,7 @@ def main():
         parser.print_help()
         sys.exit(1)
         
-    run_faststream(args.target, args.port, args.tmdb_key)
+    run_faststream(args.target, args.port, args.tmdb_key, args.verbose)
 
 if __name__ == "__main__":
     main()
