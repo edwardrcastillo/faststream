@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v2.0.0 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
+⚡ FastStream v2.0.1 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
 Features:
 - Glassmorphic Netflix/FastMovie Catalog Grid View for folders and series collections
-- Live Client-Side Instant Filtering & Search in Catalog view
+- Live Client-Side Instant Filtering & Search in Catalog view (keyboard shortcut '/')
+- Terminal Interactive Live Progress Bar during folder metadata scans
+- Robust Safe HTML & JS Entity Escaping in Search Modal (Zero JS SyntaxErrors on quotes)
+- In-Memory Cache & Dynamic Catalog Memory Sync upon 1-Click Jellyfin Renaming
 - Universal Search: Text Title, Year, TMDB ID, or IMDb ID (ttXXXXXXX or IMDb URL)
 - Clean & Silent Socket Handling (Zero BrokenPipe/ConnectionReset noise)
 - Native Favicon Handling (Zero 404 clutter)
@@ -18,16 +21,18 @@ Features:
 - Works with or without FFmpeg/FFprobe (Graceful Fallback & Native MP4 Atom Parser)
 - Instant HTTP 206 Partial Content Byte-Range Video Streaming
 - Configurable TMDB API Key (CLI flag, ENV var, or ~/.config/faststream/config.json)
-- 1-Click Atomic Jellyfin Standard Renaming (`Title (Year) [tmdbid-ID].mp4`)
 """
 
-import sys, os, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re, struct, threading, time
-from concurrent.futures import ThreadPoolExecutor
+import sys, os, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re, struct, threading, time, html
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 CONFIG_DIR = os.path.expanduser("~/.config/faststream")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_FALLBACK_KEY = "a07e22bc18f5cb106bfe4cc1f83ad8ed"
 VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.ts', '.flv', '.wmv'}
+
+# In-memory TMDB Cache
+TMDB_MEMORY_CACHE = {}
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -223,6 +228,20 @@ def print_qr_terminal(url):
     except Exception:
         pass
 
+# Terminal Live Progress Bar Helper
+def print_progress_bar(current, total, title="", width=30):
+    pct = (current / total) * 100 if total > 0 else 100
+    filled = int(width * current // total) if total > 0 else width
+    bar = "█" * filled + "░" * (width - filled)
+    
+    # Truncate title if too long for terminal
+    safe_title = (title[:30] + '..') if len(title) > 32 else title
+    sys.stdout.write(f"\r  🔍 [{bar}] {current}/{total} ({pct:.0f}%) | {safe_title:<32}")
+    sys.stdout.flush()
+    if current >= total:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
 # Audio / Video Metadata Probing
 def parse_mp4_atoms_duration(file_path):
     try:
@@ -272,7 +291,11 @@ def clean_movie_title(fname):
 def query_tmdb_search(query, year=None, api_key=None):
     key = get_tmdb_api_key(api_key)
     query_str = query.strip()
+    cache_key = f"{query_str.lower()}_{year}"
     
+    if cache_key in TMDB_MEMORY_CACHE:
+        return TMDB_MEMORY_CACHE[cache_key]
+
     # 1. Búsqueda por IMDb ID
     imdb_match = re.search(r'(tt\d{7,8})', query_str, re.I)
     if imdb_match:
@@ -295,7 +318,9 @@ def query_tmdb_search(query, year=None, api_key=None):
                         "rating": round(m.get("vote_average", 0), 1),
                         "imdb_id": imdb_id
                     })
-                if results: return results
+                if results:
+                    TMDB_MEMORY_CACHE[cache_key] = results
+                    return results
         except Exception:
             pass
 
@@ -307,7 +332,7 @@ def query_tmdb_search(query, year=None, api_key=None):
             with urllib.request.urlopen(req, timeout=4) as resp:
                 m = json.loads(resp.read().decode())
                 if m.get("id"):
-                    return [{
+                    res = [{
                         "id": m["id"],
                         "title": m["title"],
                         "original_title": m.get("original_title", ""),
@@ -318,6 +343,8 @@ def query_tmdb_search(query, year=None, api_key=None):
                         "rating": round(m.get("vote_average", 0), 1),
                         "imdb_id": m.get("imdb_id")
                     }]
+                    TMDB_MEMORY_CACHE[cache_key] = res
+                    return res
         except Exception:
             pass
 
@@ -343,6 +370,7 @@ def query_tmdb_search(query, year=None, api_key=None):
                     "rating": round(m.get("vote_average", 0), 1),
                     "imdb_id": None
                 })
+            TMDB_MEMORY_CACHE[cache_key] = results
             return results
     except Exception:
         return []
@@ -351,15 +379,14 @@ def get_file_metadata(file_path, api_key=None):
     filename = os.path.basename(file_path)
     clean_t, yr, tmdb_id = clean_movie_title(filename)
     
-    # 1. Probar ffprobe
-    duration_str = "Desconocida"
+    duration_str = "HD"
     res_str = "HD"
     codec_str = "H.264"
     audio_str = "Estéreo"
     
     try:
         cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration,size:stream=codec_name,width,height,channels', '-of', 'json', file_path]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
         if res.returncode == 0:
             data = json.loads(res.stdout)
             dur = float(data.get('format', {}).get('duration', 0))
@@ -425,13 +452,14 @@ def generate_catalog_html(folder_path, items_meta):
     
     cards_html = []
     for idx, it in enumerate(items_meta):
+        safe_title = html.escape(it.get('title', ''))
         poster = it.get('poster_url')
-        poster_tag = f'<img src="{poster}" loading="lazy" class="card-img" alt="{it["title"]}">' if poster else '<div class="card-no-poster">🎬</div>'
+        poster_tag = f'<img src="{poster}" loading="lazy" class="card-img" alt="{safe_title}">' if poster else '<div class="card-no-poster">🎬</div>'
         year_badge = f'<span class="badge year">{it.get("year")}</span>' if it.get("year") else ''
         rating_badge = f'<span class="badge rating">⭐ {it.get("rating")}</span>' if it.get("rating") else ''
         
         cards_html.append(f"""
-        <div class="media-card" onclick="window.location.href='/play?index={idx}'" data-title="{it['title'].lower()} {it.get('filename','').lower()} {it.get('year','')}">
+        <div class="media-card" onclick="window.location.href='/play?index={idx}'" data-title="{safe_title.lower()} {it.get('filename','').lower()} {it.get('year','')}">
             <div class="poster-container">
                 {poster_tag}
                 <div class="badge-overlay">
@@ -443,7 +471,7 @@ def generate_catalog_html(folder_path, items_meta):
                 </div>
             </div>
             <div class="card-info">
-                <h3 class="card-title" title="{it['title']}">{it['title']}</h3>
+                <h3 class="card-title" title="{safe_title}">{safe_title}</h3>
                 <div class="card-meta">
                     <span>⏱️ {it.get('duration','HD')}</span>
                     <span>📦 {it.get('size_mb','')}</span>
@@ -459,7 +487,7 @@ def generate_catalog_html(folder_path, items_meta):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>⚡ FastStream Hub - {folder_name}</title>
+    <title>⚡ FastStream Hub - {html.escape(folder_name)}</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
         body {{
@@ -697,7 +725,7 @@ def generate_catalog_html(folder_path, items_meta):
     <header>
         <div class="brand">
             <h1>⚡ FastStream Hub</h1>
-            <div class="folder-badge">📂 {folder_name} ({total_items} títulos)</div>
+            <div class="folder-badge">📂 {html.escape(folder_name)} ({total_items} títulos)</div>
         </div>
         <div class="header-actions">
             <div class="search-box">
@@ -760,8 +788,13 @@ def generate_catalog_html(folder_path, items_meta):
 def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_idx=0):
     backdrop_url = meta.get("backdrop_url") or meta.get("poster_url")
     bg_style = f"background-image: linear-gradient(to bottom, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.98)), url('{backdrop_url}');" if backdrop_url else "background: #0f172a;"
-    poster_img = f'<img src="{meta["poster_url"]}" alt="Poster" class="poster-img">' if meta.get("poster_url") else '<div class="no-poster">🎬</div>'
     
+    safe_title = html.escape(meta.get('title', ''))
+    safe_clean_title = html.escape(meta.get('clean_title', '')).replace('"', '&quot;')
+    safe_synopsis = html.escape(meta.get('description', ''))
+    safe_filename = html.escape(meta.get('filename', ''))
+    
+    poster_img = f'<img src="{meta["poster_url"]}" alt="Poster" class="poster-img">' if meta.get("poster_url") else '<div class="no-poster">🎬</div>'
     back_btn = '<button class="nav-btn" onclick="window.location.href=\'/\'">⬅️ Volver al Catálogo</button>' if is_dir else ''
 
     return f"""<!DOCTYPE html>
@@ -769,7 +802,7 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>⚡ {meta['title']} - FastStream</title>
+    <title>⚡ {safe_title} - FastStream</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
         body {{
@@ -1101,7 +1134,7 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
     <div class="main-card">
         <div class="player-wrapper">
             <video controls autoplay playsinline preload="metadata">
-                <source src="/video" type="video/mp4">
+                <source src="/video?index={current_idx}" type="video/mp4">
                 Navegador no compatible con video HTML5.
             </video>
         </div>
@@ -1112,7 +1145,7 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             <div class="details">
                 <div class="title-row">
                     <div class="title-left">
-                        <h1>{meta['title']}</h1>
+                        <h1>{safe_title}</h1>
                         {f'<span class="year-tag">({meta["year"]})</span>' if meta.get("year") else ''}
                         {f'<span class="rating-badge">⭐ {meta["rating"]}</span>' if meta.get("rating") else ''}
                     </div>
@@ -1127,8 +1160,8 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                     <span class="badge">🎵 {meta['audio']}</span>
                     <span class="badge">📦 {meta['size_mb']}</span>
                 </div>
-                <p class="synopsis">{meta['description']}</p>
-                <div class="file-info">📄 Archivo: {meta['filename']}</div>
+                <p class="synopsis">{safe_synopsis}</p>
+                <div class="file-info">📄 Archivo: {safe_filename}</div>
             </div>
         </div>
     </div>
@@ -1142,8 +1175,8 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             </div>
             <p style="color:#94a3b8; font-size:13px; margin:0;">Puedes escribir el <b>título</b>, el <b>ID de IMDb</b> (ej. <code>tt3495184</code>), o el <b>TMDB ID</b>:</p>
             <div class="search-box">
-                <input type="text" id="searchInput" class="search-input" value="{meta['clean_title']}" placeholder="Título, ID de IMDb o TMDB ID...">
-                <input type="text" id="yearInput" class="search-input" style="max-width:90px;" value="{meta['year'] or ''}" placeholder="Año...">
+                <input type="text" id="searchInput" class="search-input" value="{safe_clean_title}" placeholder="Título, ID de IMDb o TMDB ID..." onkeydown="if(event.key==='Enter')performTMDBSearch()">
+                <input type="text" id="yearInput" class="search-input" style="max-width:90px;" value="{meta.get('year') or ''}" placeholder="Año..." onkeydown="if(event.key==='Enter')performTMDBSearch()">
                 <button class="search-btn" onclick="performTMDBSearch()">Buscar</button>
             </div>
             <div id="resultsContainer" class="results-list"></div>
@@ -1151,6 +1184,11 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
     </div>
 
     <script>
+        function escapeHtml(str) {{
+            if (!str) return '';
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        }}
+
         function openSearchModal() {{
             document.getElementById('searchModal').style.display = 'flex';
             performTMDBSearch();
@@ -1163,33 +1201,36 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             const query = document.getElementById('searchInput').value.trim();
             const year = document.getElementById('yearInput').value.trim();
             const container = document.getElementById('resultsContainer');
-            container.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:20px;">🔍 Consultando base de datos cinematográfica...</div>';
+            container.innerHTML = '<div style="color:#38bdf8; text-align:center; padding:24px; font-weight:600;">🔍 Consultando base de datos cinematográfica en vivo...</div>';
             
             try {{
                 const res = await fetch(`/api/search?q=${{encodeURIComponent(query)}}&year=${{encodeURIComponent(year)}}`);
                 const results = await res.json();
-                if (!results.length) {{
-                    container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">❌ No se encontraron resultados. Prueba ingresando el IMDb ID (ej: tt3495184).</div>';
+                if (!results || !results.length) {{
+                    container.innerHTML = `<div style="color:#ef4444; text-align:center; padding:20px; font-size:14px;">❌ No se encontraron coincidencias para "${{escapeHtml(query)}}".<br><span style="color:#94a3b8; font-size:12px;">Prueba buscando por su código de IMDb (ej: tt3495184) o su ID numérico de TMDB.</span></div>`;
                     return;
                 }}
                 
                 let html = '';
                 results.forEach(m => {{
                     const ext = "{os.path.splitext(meta['filename'])[1]}";
-                    const cleanTitleSafe = m.title.replace(/[/\\\\?%*:|"<>]/g, '').trim();
+                    const cleanTitleSafe = m.title.replace(/[/\\\\?%*:|"<>.]/g, '').trim();
                     const jellyfinName = `${{cleanTitleSafe}} (${{m.year}}) [tmdbid-${{m.id}}]${{ext}}`;
                     const poster = m.poster_url ? `<img src="${{m.poster_url}}" class="result-poster">` : '<div class="result-poster" style="display:flex;align-items:center;justify-content:center;">🎬</div>';
+                    
+                    const safeEncTitle = encodeURIComponent(cleanTitleSafe);
+                    const safeYear = encodeURIComponent(m.year || '');
                     
                     html += `
                     <div class="result-item">
                         ${{poster}}
                         <div class="result-details">
-                            <div class="result-title">${{m.title}} <span style="color:#94a3b8; font-weight:normal;">(${{m.year}})</span> ⭐ ${{m.rating}}</div>
-                            <div class="result-sub">TMDB ID: ${{m.id}} ${{m.imdb_id ? '| IMDb: ' + m.imdb_id : ''}} | Original: <i>${{m.original_title}}</i></div>
-                            <div class="result-desc">${{m.overview}}</div>
-                            <div class="jellyfin-suggestion">🏷️ Sugerencia Jellyfin: <b>${{jellyfinName}}</b></div>
+                            <div class="result-title">${{escapeHtml(m.title)}} <span style="color:#94a3b8; font-weight:normal;">(${{escapeHtml(m.year)}})</span> ⭐ ${{m.rating}}</div>
+                            <div class="result-sub">TMDB ID: ${{m.id}} ${{m.imdb_id ? '| IMDb: ' + m.imdb_id : ''}} | Original: <i>${{escapeHtml(m.original_title)}}</i></div>
+                            <div class="result-desc">${{escapeHtml(m.overview)}}</div>
+                            <div class="jellyfin-suggestion">🏷️ Sugerencia Jellyfin: <b>${{escapeHtml(jellyfinName)}}</b></div>
                         </div>
-                        <button class="apply-btn" onclick="applyRename('${{m.id}}', '${{encodeURIComponent(cleanTitleSafe)}}', '${{m.year}}')">✅ Aplicar y Renombrar</button>
+                        <button class="apply-btn" onclick="applyRename('${{m.id}}', '${{safeEncTitle}}', '${{safeYear}}')">✅ Aplicar y Renombrar</button>
                     </div>`;
                 }});
                 container.innerHTML = html;
@@ -1201,13 +1242,13 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
         async function applyRename(tmdbId, encTitle, year) {{
             if (!confirm("¿Deseas renombrar físicamente este archivo al estándar Jellyfin y actualizar los metadatos?")) return;
             try {{
-                const res = await fetch('/api/rename', {{
+                const res = await fetch('/api/rename?index={current_idx}', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{
                         tmdb_id: tmdbId,
                         title: decodeURIComponent(encTitle),
-                        year: year
+                        year: decodeURIComponent(year)
                     }})
                 }});
                 const data = await res.json();
@@ -1260,17 +1301,27 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
             print(f"❌ No se encontraron archivos de video en '{target}'.")
             sys.exit(1)
             
-        print(f"🔍 Obteniendo metadatos para {len(file_list)} videos en paralelo...")
-        catalog_items = [None] * len(file_list)
+        total_files = len(file_list)
+        print(f"🔍 Obteniendo metadatos para {total_files} videos en paralelo:")
+        catalog_items = [None] * total_files
+        completed_count = 0
         
         def fetch_meta_for_index(idx, fpath):
             return idx, get_file_metadata(fpath, api_key)
             
-        with ThreadPoolExecutor(max_workers=16) as executor:
-            futures = [executor.submit(fetch_meta_for_index, i, f) for i, f in enumerate(file_list)]
-            for future in futures:
-                i, m = future.result()
-                catalog_items[i] = m
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            future_to_idx = {executor.submit(fetch_meta_for_index, i, f): (i, f) for i, f in enumerate(file_list)}
+            for future in as_completed(future_to_idx):
+                idx, fpath = future_to_idx[future]
+                try:
+                    i, m = future.result()
+                    catalog_items[i] = m
+                    completed_count += 1
+                    print_progress_bar(completed_count, total_files, m.get('title', os.path.basename(fpath)))
+                except Exception:
+                    completed_count += 1
+                    catalog_items[idx] = get_file_metadata(fpath, api_key)
+                    print_progress_bar(completed_count, total_files, os.path.basename(fpath))
 
         current_file = file_list[0]
         meta = catalog_items[0]
@@ -1306,7 +1357,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 self.end_headers()
 
         def do_GET(self):
-            nonlocal current_file, abs_target, meta, catalog_items
+            nonlocal current_file, abs_target, meta, catalog_items, file_list
             parsed = urllib.parse.urlparse(self.path)
             
             if parsed.path == "/favicon.ico":
@@ -1334,12 +1385,12 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
                 if is_dir:
-                    html = generate_catalog_html(abs_target, catalog_items)
+                    html_content = generate_catalog_html(abs_target, catalog_items)
                 else:
                     meta = get_file_metadata(current_file, api_key)
-                    html = generate_player_html(current_file, meta, is_dir=False)
+                    html_content = generate_player_html(current_file, meta, is_dir=False)
                 try:
-                    self.wfile.write(html.encode("utf-8"))
+                    self.wfile.write(html_content.encode("utf-8"))
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
                 return
@@ -1350,21 +1401,32 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 idx = int(query.get("index", ["0"])[0])
                 if 0 <= idx < len(file_list):
                     current_file = file_list[idx]
-                    meta = catalog_items[idx] if idx < len(catalog_items) else get_file_metadata(current_file, api_key)
+                    meta = catalog_items[idx] if idx < len(catalog_items) and catalog_items[idx] else get_file_metadata(current_file, api_key)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                html = generate_player_html(current_file, meta, is_dir=is_dir, file_list=file_list, current_idx=idx)
+                html_content = generate_player_html(current_file, meta, is_dir=is_dir, file_list=file_list, current_idx=idx)
                 try:
-                    self.wfile.write(html.encode("utf-8"))
+                    self.wfile.write(html_content.encode("utf-8"))
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
                 return
 
             # Streaming HTTP 206 Partial Content
             if parsed.path.startswith("/video"):
+                # Permitir reproducir por index si se proporciona
+                query = urllib.parse.parse_qs(parsed.query)
+                if "index" in query:
+                    idx = int(query.get("index", ["0"])[0])
+                    if 0 <= idx < len(file_list):
+                        video_target = file_list[idx]
+                    else:
+                        video_target = current_file
+                else:
+                    video_target = current_file
+
                 try:
-                    file_size = os.path.getsize(current_file)
+                    file_size = os.path.getsize(video_target)
                 except Exception:
                     self.send_error(404, "Archivo de video no encontrado")
                     return
@@ -1389,7 +1451,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                         self.end_headers()
 
                         try:
-                            with open(current_file, "rb") as f:
+                            with open(video_target, "rb") as f:
                                 f.seek(start)
                                 remaining = content_length
                                 while remaining > 0:
@@ -1409,7 +1471,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 self.end_headers()
 
                 try:
-                    with open(current_file, "rb") as f:
+                    with open(video_target, "rb") as f:
                         while True:
                             data = f.read(64 * 1024)
                             if not data: break
@@ -1421,7 +1483,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
             self.send_error(404)
 
         def do_POST(self):
-            nonlocal current_file, abs_target, meta, is_shutting_down
+            nonlocal current_file, abs_target, meta, is_shutting_down, file_list, catalog_items
             parsed = urllib.parse.urlparse(self.path)
 
             if parsed.path == "/api/shutdown":
@@ -1441,6 +1503,11 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
 
             if parsed.path == "/api/rename":
                 try:
+                    query = urllib.parse.parse_qs(parsed.query)
+                    target_idx = None
+                    if "index" in query:
+                        target_idx = int(query.get("index", ["0"])[0])
+
                     content_length = int(self.headers.get('Content-Length', 0))
                     body = self.rfile.read(content_length).decode('utf-8')
                     data = json.loads(body)
@@ -1449,22 +1516,34 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                     title = data.get("title")
                     year = data.get("year")
                     
+                    file_to_rename = current_file
+                    if is_dir and target_idx is not None and 0 <= target_idx < len(file_list):
+                        file_to_rename = file_list[target_idx]
+
                     clean_t = re.sub(r'[/\\?%*:|"<>.]', '', title).strip()
-                    ext = os.path.splitext(current_file)[1]
-                    parent_dir = os.path.dirname(current_file)
+                    ext = os.path.splitext(file_to_rename)[1]
+                    parent_dir = os.path.dirname(file_to_rename)
                     
                     new_filename = f"{clean_t} ({year}) [tmdbid-{tmdb_id}]{ext}"
                     new_full_path = os.path.join(parent_dir, new_filename)
                     
                     print(f"\n🏷️ Renombrando archivo físico a estándar Jellyfin:")
-                    print(f"   Origen:  {current_file}")
+                    print(f"   Origen:  {file_to_rename}")
                     print(f"   Destino: {new_full_path}")
                     
-                    os.rename(current_file, new_full_path)
+                    os.rename(file_to_rename, new_full_path)
                     current_file = new_full_path
                     if not is_dir:
                         abs_target = new_full_path
-                    meta = get_file_metadata(current_file, api_key)
+                    else:
+                        if target_idx is not None and 0 <= target_idx < len(file_list):
+                            file_list[target_idx] = new_full_path
+                    
+                    # Actualizar metadatos en vivo
+                    new_meta = get_file_metadata(new_full_path, api_key)
+                    meta = new_meta
+                    if is_dir and target_idx is not None and 0 <= target_idx < len(catalog_items):
+                        catalog_items[target_idx] = new_meta
                     
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1503,7 +1582,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v2.0 - STREAMING & GLASSMORPHIC MEDIA HUB")
+    print(f"⚡ FASTSTREAM v2.0.1 - STREAMING & GLASSMORPHIC MEDIA HUB")
     print("="*70)
     if is_dir:
         print(f"📁 Modo:     Catálogo de Carpeta ({len(file_list)} videos)")
