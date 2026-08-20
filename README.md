@@ -45,6 +45,22 @@ faststream "/media/Series/Evil/Season03/"
 faststream pelicula.mp4 -p 8080
 ```
 
+### 4. Configurar tu propia API Key de TMDB (Opcional):
+Por defecto, `faststream` incluye una clave de acceso público para funcionar al instante. Si prefieres usar tu propia clave oficial de TheMovieDB:
+
+* **Guardarla de forma permanente en tu máquina (`~/.config/faststream/config.json`):**
+  ```bash
+  faststream --set-tmdb-key "TU_CLAVE_AQUI"
+  ```
+* **Usar mediante variable de entorno:**
+  ```bash
+  export TMDB_API_KEY="TU_CLAVE_AQUI"
+  ```
+* **Pasarla puntualmente como parámetro de consola:**
+  ```bash
+  faststream pelicula.mp4 --tmdb-key "TU_CLAVE_AQUI"
+  ```
+
 ---
 
 ## 🥊 Comparativa: FastStream vs miniserve vs dufs
@@ -71,6 +87,7 @@ faststream pelicula.mp4 -p 8080
 - [x] Integración de API TMDB con carátulas y fondos.
 - [x] Modal interactivo de búsqueda y corrección de metadatos.
 - [x] Renombrado físico atómico al estándar Jellyfin.
+- [x] Configuración modular y persistente de API Key de TMDB.
 - [ ] Selector de pistas de audio y subtítulos incrustados (SRT / ASS / VTT) en el reproductor web.
 - [ ] Modo de transcodificación ligera al vuelo para códecs no soportados nativamente por navegadores (HEVC / AC3).
 - [ ] Modo batch CLI (`faststream --batch-rename /carpeta/`) para renombrado masivo asistido.
