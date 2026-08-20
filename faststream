@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v2.0.1 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
+⚡ FastStream v2.0.2 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
@@ -1173,7 +1173,11 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                 <h2>🔍 Buscar por Título, TMDB ID o IMDb ID (ttXXXXXXX)</h2>
                 <button class="close-btn" onclick="closeSearchModal()">✕</button>
             </div>
-            <p style="color:#94a3b8; font-size:13px; margin:0;">Puedes escribir el <b>título</b>, el <b>ID de IMDb</b> (ej. <code>tt3495184</code>), o el <b>TMDB ID</b>:</p>
+            <div style="background:rgba(56, 189, 248, 0.1); border:1px solid rgba(56, 189, 248, 0.25); border-radius:8px; padding:10px 14px; display:flex; align-items:center; gap:10px;">
+                <span style="font-size:18px;">📄</span>
+                <span style="color:#cbd5e1; font-size:13px;">Archivo a renombrar: <b style="color:#38bdf8; word-break:break-all;">{safe_filename}</b></span>
+            </div>
+            <p style="color:#94a3b8; font-size:13px; margin:0;">Escribe el <b>título</b>, el <b>ID de IMDb</b> (ej. <code>tt3495184</code>), o el <b>TMDB ID</b>:</p>
             <div class="search-box">
                 <input type="text" id="searchInput" class="search-input" value="{safe_clean_title}" placeholder="Título, ID de IMDb o TMDB ID..." onkeydown="if(event.key==='Enter')performTMDBSearch()">
                 <input type="text" id="yearInput" class="search-input" style="max-width:90px;" value="{meta.get('year') or ''}" placeholder="Año..." onkeydown="if(event.key==='Enter')performTMDBSearch()">
@@ -1230,7 +1234,7 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                             <div class="result-desc">${{escapeHtml(m.overview)}}</div>
                             <div class="jellyfin-suggestion">🏷️ Sugerencia Jellyfin: <b>${{escapeHtml(jellyfinName)}}</b></div>
                         </div>
-                        <button class="apply-btn" onclick="applyRename('${{m.id}}', '${{safeEncTitle}}', '${{safeYear}}')">✅ Aplicar y Renombrar</button>
+                        <button class="apply-btn" id="btn-apply-${{m.id}}" onclick="applyRename('${{m.id}}', '${{safeEncTitle}}', '${{safeYear}}')">✅ Aplicar y Ver</button>
                     </div>`;
                 }});
                 container.innerHTML = html;
@@ -1240,7 +1244,12 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
         }}
 
         async function applyRename(tmdbId, encTitle, year) {{
-            if (!confirm("¿Deseas renombrar físicamente este archivo al estándar Jellyfin y actualizar los metadatos?")) return;
+            const btn = document.getElementById(`btn-apply-${{tmdbId}}`);
+            if (btn) {{
+                btn.disabled = true;
+                btn.innerText = "⏳ Guardando...";
+                btn.style.opacity = "0.7";
+            }}
             try {{
                 const res = await fetch('/api/rename?index={current_idx}', {{
                     method: 'POST',
@@ -1253,13 +1262,23 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                 }});
                 const data = await res.json();
                 if (data.success) {{
-                    alert("✅ ¡Archivo renombrado con éxito a estándar Jellyfin!\\n" + data.new_filename);
+                    // Transición directa al reproductor con los nuevos metadatos y poster aplicados
                     window.location.reload();
                 }} else {{
-                    alert("❌ Error: " + data.error);
+                    alert("❌ Error al renombrar: " + data.error);
+                    if (btn) {{
+                        btn.disabled = false;
+                        btn.innerText = "✅ Aplicar y Ver";
+                        btn.style.opacity = "1";
+                    }}
                 }}
             }} catch(e) {{
-                alert("❌ Error al aplicar renombrado.");
+                alert("❌ Error de red al aplicar renombrado.");
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.innerText = "✅ Aplicar y Ver";
+                    btn.style.opacity = "1";
+                }}
             }}
         }}
 
@@ -1582,7 +1601,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v2.0.1 - STREAMING & GLASSMORPHIC MEDIA HUB")
+    print(f"⚡ FASTSTREAM v2.0.2 - STREAMING & GLASSMORPHIC MEDIA HUB")
     print("="*70)
     if is_dir:
         print(f"📁 Modo:     Catálogo de Carpeta ({len(file_list)} videos)")
