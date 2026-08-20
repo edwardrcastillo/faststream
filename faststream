@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v1.1.0 - Zero-Dependency Instant HTTP Range Video Streamer CLI
+⚡ FastStream v1.2.0 - Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Renamer CLI
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
 Features:
 - Instant HTTP 206 Partial Content Byte-Range Video Streaming
 - Automatic TMDB Poster & Backdrop Enrichment
-- Embedded Cover Art / Snapshot Fallback
-- Premium Glassmorphic Web UI
-- Multi-file Directory Navigation
+- Interactive Manual TMDB Search & Correction Modal
+- 1-Click Atomic Jellyfin Standard Renaming (`Title (Year) [tmdbid-ID].mp4`)
+- Glassmorphic Web Player UI
 """
 
 import sys, os, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re
@@ -30,61 +30,70 @@ VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.ts', '.m4v', '.webm'}
 
 def clean_search_title(fname):
     name = os.path.splitext(os.path.basename(fname))[0]
-    # Extraer año si existe
+    # Extraer tmdbid si ya existe
+    tmdb_match = re.search(r'\[tmdbid-(\d+)\]', name)
+    tmdb_id = tmdb_match.group(1) if tmdb_match else None
+    
     y_match = re.search(r'\((\d{4})\)', name)
     year = y_match.group(1) if y_match else None
     
-    # Limpiar ruido
     clean = re.sub(r'\[.*?\]|\(.*?\)', '', name)
     clean = re.sub(r'1080p|720p|480p|x264|x265|hevc|bluray|dvdrip|web-dl|webrip|latino|dual|castellano', '', clean, flags=re.I)
     clean = re.sub(r'[-_.]', ' ', clean).strip()
     clean = re.sub(r'\s+', ' ', clean)
-    return clean, year
+    return clean, year, tmdb_id
 
-def fetch_tmdb_metadata(title, year=None):
-    if not TMDB_API_KEY:
-        return {}
+def query_tmdb_search(query, year=None):
+    if not TMDB_API_KEY or not query:
+        return []
     try:
-        clean, y = clean_search_title(title)
-        yr = year or y
-        url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={urllib.parse.quote(clean)}&language=es-MX"
-        if yr:
-            url += f"&year={yr}"
-        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.1"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={urllib.parse.quote(query)}&language=es-MX"
+        if year:
+            url += f"&year={year}"
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.2"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode())
             results = data.get("results", [])
-            if results:
-                m = results[0]
-                return {
-                    "tmdb_id": m.get("id"),
+            items = []
+            for m in results[:10]:
+                items.append({
+                    "id": m.get("id"),
                     "title": m.get("title"),
-                    "overview": m.get("overview"),
-                    "release_date": m.get("release_date"),
-                    "vote_average": m.get("vote_average"),
-                    "poster_url": f"https://image.tmdb.org/t/p/w500{m.get('poster_path')}" if m.get("poster_path") else None,
-                    "backdrop_url": f"https://image.tmdb.org/t/p/original{m.get('backdrop_path')}" if m.get("backdrop_path") else None
-                }
+                    "original_title": m.get("original_title"),
+                    "year": m.get("release_date", "")[:4] if m.get("release_date") else "N/A",
+                    "overview": m.get("overview") or "Sin sinopsis disponible.",
+                    "poster_url": f"https://image.tmdb.org/t/p/w300{m.get('poster_path')}" if m.get("poster_path") else None,
+                    "backdrop_url": f"https://image.tmdb.org/t/p/original{m.get('backdrop_path')}" if m.get("backdrop_path") else None,
+                    "rating": f"{m.get('vote_average'):.1f}" if m.get("vote_average") else "N/A"
+                })
+            return items
     except Exception:
-        pass
-    return {}
+        return []
 
-def extract_video_snapshot(video_path):
-    out_snap = f"/tmp/faststream_snap_{abs(hash(video_path)) % 100000}.jpg"
-    if os.path.exists(out_snap):
-        return out_snap
+def fetch_tmdb_by_id(tmdb_id):
     try:
-        cmd = ["ffmpeg", "-y", "-ss", "30", "-i", video_path, "-vframes", "1", "-q:v", "2", out_snap]
-        res = subprocess.run(cmd, capture_output=True, timeout=5)
-        if res.returncode == 0 and os.path.exists(out_snap):
-            return out_snap
+        url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={TMDB_API_KEY}&language=es-MX"
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.2"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            m = json.loads(resp.read().decode())
+            return {
+                "tmdb_id": m.get("id"),
+                "title": m.get("title"),
+                "overview": m.get("overview"),
+                "release_date": m.get("release_date"),
+                "vote_average": m.get("vote_average"),
+                "poster_url": f"https://image.tmdb.org/t/p/w500{m.get('poster_path')}" if m.get("poster_path") else None,
+                "backdrop_url": f"https://image.tmdb.org/t/p/original{m.get('backdrop_path')}" if m.get("backdrop_path") else None
+            }
     except Exception:
-        pass
-    return None
+        return {}
 
 def get_file_metadata(file_path):
     cmd = ['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-of', 'json', file_path]
-    title = os.path.splitext(os.path.basename(file_path))[0]
+    raw_fname = os.path.basename(file_path)
+    clean_t, yr, tmdb_id = clean_search_title(raw_fname)
+    
+    title = clean_t
     duration_str = "N/A"
     res_str = "N/A"
     v_codec = "N/A"
@@ -117,10 +126,22 @@ def get_file_metadata(file_path):
     except Exception:
         pass
     
-    tmdb = fetch_tmdb_metadata(title)
+    # Buscar por TMDB ID si ya está en el nombre, o por título + año
+    tmdb = {}
+    if tmdb_id:
+        tmdb = fetch_tmdb_by_id(tmdb_id)
+    if not tmdb:
+        # Si tiene año en tags internos
+        search_year = yr or (tags.get('date') if 'tags' in locals() and tags.get('date') else None)
+        search_res = query_tmdb_search(clean_t, search_year)
+        if search_res:
+            tmdb = search_res[0]
+            tmdb['poster_url'] = f"https://image.tmdb.org/t/p/w500{tmdb['poster_url'].split('/')[-1]}" if tmdb.get('poster_url') else None
     
     return {
         'title': tmdb.get('title') or title,
+        'filename': raw_fname,
+        'clean_title': clean_t,
         'duration': duration_str,
         'resolution': res_str,
         'codec': v_codec,
@@ -129,8 +150,9 @@ def get_file_metadata(file_path):
         'description': tmdb.get('overview') or tags_desc or "Sin descripción disponible.",
         'poster_url': tmdb.get('poster_url'),
         'backdrop_url': tmdb.get('backdrop_url'),
-        'rating': f"⭐ {tmdb.get('vote_average'):.1f}/10" if tmdb.get('vote_average') else None,
-        'year': tmdb.get('release_date', '')[:4] if tmdb.get('release_date') else None
+        'rating': f"⭐ {tmdb.get('vote_average'):.1f}/10" if tmdb.get('vote_average') else (f"⭐ {tmdb.get('rating')}/10" if tmdb.get('rating') and tmdb.get('rating') != "N/A" else None),
+        'year': tmdb.get('release_date', '')[:4] if tmdb.get('release_date') else (tmdb.get('year') or yr),
+        'tmdb_id': tmdb.get('id') or tmdb_id
     }
 
 def generate_player_html(target_path, meta, is_dir=False, file_list=None):
@@ -171,15 +193,14 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
 <body>
     <div class="container">
         <h1>⚡ FastStream Hub</h1>
-        <p>Carpeta compartida: <b>{os.path.basename(target_path)}</b> ({len(file_list)} videos disponibles)</p>
+        <p>Carpeta: <b>{os.path.basename(target_path)}</b> ({len(file_list)} videos disponibles)</p>
         <div class="list">{items_html}</div>
     </div>
 </body>
 </html>"""
 
-    # Vista de Reproducción con Carátula TMDB
     poster_img = f'<img src="{meta["poster_url"]}" alt="Poster" class="poster-img">' if meta.get("poster_url") else '<div class="poster-placeholder">🎬</div>'
-    backdrop_css = f'background-image: linear-gradient(to bottom, rgba(7,9,14,0.75), #07090e), url("{meta["backdrop_url"]}");' if meta.get("backdrop_url") else 'background: #07090e;'
+    backdrop_css = f'background-image: linear-gradient(to bottom, rgba(7,9,14,0.78), #07090e), url("{meta["backdrop_url"]}");' if meta.get("backdrop_url") else 'background: #07090e;'
     
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -207,10 +228,10 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             width: 100%;
             max-width: 1050px;
             background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(20px);
+            backdrop-filter: blur(25px);
             border-radius: 16px;
-            border: 1px solid rgba(255,255,255,0.1);
-            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8);
+            border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.9);
             overflow: hidden;
             display: flex;
             flex-direction: column;
@@ -230,6 +251,7 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             padding: 24px 30px;
             display: flex;
             gap: 24px;
+            position: relative;
         }}
         .poster-box {{
             flex-shrink: 0;
@@ -262,9 +284,16 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
         .title-row {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            justify-content: space-between;
             flex-wrap: wrap;
             margin-bottom: 8px;
+            gap: 10px;
+        }}
+        .title-left {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
         }}
         h1 {{
             margin: 0;
@@ -285,6 +314,25 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             border-radius: 6px;
             font-size: 12px;
             font-weight: 700;
+        }}
+        .edit-meta-btn {{
+            background: #e50914;
+            color: #fff;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            box-shadow: 0 4px 15px rgba(229,9,20,0.4);
+        }}
+        .edit-meta-btn:hover {{
+            background: #b90710;
+            transform: scale(1.03);
         }}
         .badges-row {{
             display: flex;
@@ -307,11 +355,156 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             line-height: 1.5;
             margin: 0;
         }}
-        @media (max-width: 768px) {{
-            .info-section {{ flex-direction: column; align-items: center; text-align: center; }}
-            .title-row {{ justify-content: center; }}
-            .badges-row {{ justify-content: center; }}
-            .poster-box {{ width: 120px; }}
+        .file-info {{
+            margin-top: 12px;
+            font-size: 12px;
+            color: #64748b;
+            font-family: monospace;
+            background: rgba(0,0,0,0.3);
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px dashed #334155;
+            display: inline-block;
+        }}
+
+        /* MODAL DE BÚSQUEDA Y RENOMBRADO JELLYFIN */
+        .modal-overlay {{
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(10px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }}
+        .modal-card {{
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 750px;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 24px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.9);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }}
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .modal-header h2 {{
+            margin: 0;
+            font-size: 20px;
+            color: #f8fafc;
+        }}
+        .close-btn {{
+            background: #1e293b;
+            border: none;
+            color: #94a3b8;
+            font-size: 18px;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+        }}
+        .search-box {{
+            display: flex;
+            gap: 10px;
+        }}
+        .search-input {{
+            flex-grow: 1;
+            background: #1e293b;
+            border: 1px solid #334155;
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 15px;
+            outline: none;
+        }}
+        .search-btn {{
+            background: #38bdf8;
+            color: #0f172a;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+        }}
+        .results-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 10px;
+        }}
+        .result-item {{
+            display: flex;
+            gap: 16px;
+            background: #1e293b;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid #334155;
+            align-items: center;
+        }}
+        .result-poster {{
+            width: 55px;
+            height: 82px;
+            object-fit: cover;
+            border-radius: 6px;
+            background: #0f172a;
+        }}
+        .result-details {{
+            flex-grow: 1;
+        }}
+        .result-title {{
+            font-weight: 700;
+            font-size: 15px;
+            color: #f8fafc;
+        }}
+        .result-sub {{
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 2px;
+        }}
+        .result-desc {{
+            font-size: 12px;
+            color: #cbd5e1;
+            margin-top: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }}
+        .jellyfin-suggestion {{
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #34d399;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 6px;
+        }}
+        .apply-btn {{
+            background: #10b981;
+            color: #0f172a;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }}
+        .apply-btn:hover {{
+            background: #059669;
+            color: #fff;
         }}
     </style>
 </head>
@@ -329,9 +522,12 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
             </div>
             <div class="details">
                 <div class="title-row">
-                    <h1>{meta['title']}</h1>
-                    {f'<span class="year-tag">({meta["year"]})</span>' if meta.get("year") else ''}
-                    {f'<span class="rating-badge">{meta["rating"]}</span>' if meta.get("rating") else ''}
+                    <div class="title-left">
+                        <h1>{meta['title']}</h1>
+                        {f'<span class="year-tag">({meta["year"]})</span>' if meta.get("year") else ''}
+                        {f'<span class="rating-badge">{meta["rating"]}</span>' if meta.get("rating") else ''}
+                    </div>
+                    <button class="edit-meta-btn" onclick="openSearchModal()">🔍 Corregir / Renombrar</button>
                 </div>
                 <div class="badges-row">
                     <span class="badge">⏱️ {meta['duration']}</span>
@@ -340,9 +536,100 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
                     <span class="badge">📦 {meta['size_mb']}</span>
                 </div>
                 <p class="synopsis">{meta['description']}</p>
+                <div class="file-info">📄 Archivo: {meta['filename']}</div>
             </div>
         </div>
     </div>
+
+    <!-- MODAL DE BÚSQUEDA Y RENOMBRADO JELLYFIN -->
+    <div id="searchModal" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>🔍 Buscar Metadatos y Renombrar a Jellyfin</h2>
+                <button class="close-btn" onclick="closeSearchModal()">✕</button>
+            </div>
+            <p style="color:#94a3b8; font-size:13px; margin:0;">Escribe el título exacto o año para buscar en TMDB y sugerir el estándar <code>Título (Año) [tmdbid-ID].mp4</code>:</p>
+            <div class="search-box">
+                <input type="text" id="searchInput" class="search-input" value="{meta['clean_title']}" placeholder="Buscar en TMDB...">
+                <input type="text" id="yearInput" class="search-input" style="max-width:100px;" value="{meta['year'] or ''}" placeholder="Año...">
+                <button class="search-btn" onclick="performTMDBSearch()">Buscar</button>
+            </div>
+            <div id="resultsContainer" class="results-list"></div>
+        </div>
+    </div>
+
+    <script>
+        function openSearchModal() {{
+            document.getElementById('searchModal').style.display = 'flex';
+            performTMDBSearch();
+        }}
+        function closeSearchModal() {{
+            document.getElementById('searchModal').style.display = 'none';
+        }}
+        
+        async function performTMDBSearch() {{
+            const query = document.getElementById('searchInput').value.trim();
+            const year = document.getElementById('yearInput').value.trim();
+            const container = document.getElementById('resultsContainer');
+            container.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:20px;">🔍 Buscando en TMDB...</div>';
+            
+            try {{
+                const res = await fetch(`/api/search?q=${{encodeURIComponent(query)}}&year=${{encodeURIComponent(year)}}`);
+                const results = await res.json();
+                if (!results.length) {{
+                    container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">❌ No se encontraron resultados en TMDB. Intenta con otro término.</div>';
+                    return;
+                }}
+                
+                let html = '';
+                results.forEach(m => {{
+                    const ext = "{os.path.splitext(meta['filename'])[1]}";
+                    const cleanTitleSafe = m.title.replace(/[/\\\\?%*:|"<>]/g, '').trim();
+                    const jellyfinName = `${{cleanTitleSafe}} (${{m.year}}) [tmdbid-${{m.id}}]${{ext}}`;
+                    const poster = m.poster_url ? `<img src="${{m.poster_url}}" class="result-poster">` : '<div class="result-poster" style="display:flex;align-items:center;justify-content:center;">🎬</div>';
+                    
+                    html += `
+                    <div class="result-item">
+                        ${{poster}}
+                        <div class="result-details">
+                            <div class="result-title">${{m.title}} <span style="color:#94a3b8; font-weight:normal;">(${{m.year}})</span> ⭐ ${{m.rating}}</div>
+                            <div class="result-sub">ID TMDB: ${{m.id}} | Original: <i>${{m.original_title}}</i></div>
+                            <div class="result-desc">${{m.overview}}</div>
+                            <div class="jellyfin-suggestion">🏷️ Sugerencia Jellyfin: <b>${{jellyfinName}}</b></div>
+                        </div>
+                        <button class="apply-btn" onclick="applyRename('${{m.id}}', '${{encodeURIComponent(cleanTitleSafe)}}', '${{m.year}}')">✅ Aplicar y Renombrar</button>
+                    </div>`;
+                }});
+                container.innerHTML = html;
+            }} catch(e) {{
+                container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:20px;">❌ Error de conexión al consultar TMDB.</div>';
+            }}
+        }}
+
+        async function applyRename(tmdbId, encTitle, year) {{
+            if (!confirm("¿Deseas renombrar físicamente este archivo al estándar Jellyfin y actualizar los metadatos?")) return;
+            try {{
+                const res = await fetch('/api/rename', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{
+                        tmdb_id: tmdbId,
+                        title: decodeURIComponent(encTitle),
+                        year: year
+                    }})
+                }});
+                const data = await res.json();
+                if (data.success) {{
+                    alert("✅ Archivo renombrado exitosamente a: " + data.new_filename);
+                    window.location.reload();
+                }} else {{
+                    alert("❌ Error: " + data.error);
+                }}
+            }} catch(e) {{
+                alert("❌ Error al solicitar el renombrado.");
+            }}
+        }}
+    </script>
 </body>
 </html>"""
 
@@ -368,25 +655,43 @@ def run_faststream(target, port=8090):
         current_file = file_list[0]
         meta = get_file_metadata(current_file)
     else:
-        print("🔍 Obteniendo carátula y metadatos oficiales...")
+        print("🔍 Consultando metadatos iniciales...")
         meta = get_file_metadata(abs_target)
 
     class FastStreamHandler(http.server.BaseHTTPRequestHandler):
         def do_HEAD(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html" if not self.path.startswith("/video") else "video/mp4")
-            self.send_header("Accept-Ranges", "bytes")
-            self.end_headers()
-
-        def do_GET(self):
-            nonlocal current_file
-            parsed = urllib.parse.urlparse(self.path)
-            
-            if parsed.path == "/" or parsed.path == "/index.html":
+            if self.path.startswith("/video"):
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+            else:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                html = generate_player_html(abs_target, meta, is_dir=is_dir, file_list=file_list)
+
+        def do_GET(self):
+            nonlocal current_file, abs_target, meta
+            parsed = urllib.parse.urlparse(self.path)
+            
+            # API DE BÚSQUEDA TMDB
+            if parsed.path == "/api/search":
+                qs = urllib.parse.parse_qs(parsed.query)
+                q = qs.get("q", [""])[0]
+                y = qs.get("year", [""])[0]
+                results = query_tmdb_search(q, y)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps(results, ensure_ascii=False).encode("utf-8"))
+                return
+
+            if parsed.path == "/" or parsed.path == "/index.html":
+                meta = get_file_metadata(current_file)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                html = generate_player_html(current_file, meta, is_dir=is_dir, file_list=file_list)
                 self.wfile.write(html.encode("utf-8"))
                 return
                 
@@ -395,11 +700,11 @@ def run_faststream(target, port=8090):
                 idx = int(query.get("index", ["0"])[0])
                 if 0 <= idx < len(file_list):
                     current_file = file_list[idx]
-                    fmeta = get_file_metadata(current_file)
+                    meta = get_file_metadata(current_file)
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.end_headers()
-                    html = generate_player_html(current_file, fmeta, is_dir=False)
+                    html = generate_player_html(current_file, meta, is_dir=False)
                     self.wfile.write(html.encode("utf-8"))
                 return
 
@@ -450,6 +755,54 @@ def run_faststream(target, port=8090):
 
             self.send_error(404)
 
+        def do_POST(self):
+            nonlocal current_file, abs_target, meta
+            parsed = urllib.parse.urlparse(self.path)
+            
+            # API DE RENOMBRADO JELLYFIN
+            if parsed.path == "/api/rename":
+                length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(length)
+                try:
+                    payload = json.loads(body.decode('utf-8'))
+                    tmdb_id = payload.get('tmdb_id')
+                    title = payload.get('title', '').strip()
+                    year = payload.get('year', '').strip()
+                    
+                    clean_t = re.sub(r'[/\\\\?%*:|"<>.]', '', title).strip()
+                    ext = os.path.splitext(current_file)[1]
+                    parent_dir = os.path.dirname(current_file)
+                    
+                    new_filename = f"{clean_t} ({year}) [tmdbid-{tmdb_id}]{ext}"
+                    new_full_path = os.path.join(parent_dir, new_filename)
+                    
+                    print(f"\n🏷️ Renombrando archivo físico a estándar Jellyfin:")
+                    print(f"   Origen:  {current_file}")
+                    print(f"   Destino: {new_full_path}")
+                    
+                    os.rename(current_file, new_full_path)
+                    current_file = new_full_path
+                    if not is_dir:
+                        abs_target = new_full_path
+                    meta = get_file_metadata(current_file)
+                    
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "success": True,
+                        "new_filename": new_filename,
+                        "new_path": new_full_path
+                    }).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode('utf-8'))
+                return
+
+            self.send_error(404)
+
     class ReusableTCPServer(socketserver.TCPServer):
         allow_reuse_address = True
 
@@ -457,10 +810,9 @@ def run_faststream(target, port=8090):
     stream_url = f"http://{lan_ip}:{port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v1.1 - EN VIVO CON CARÁTULA Y METADATOS")
+    print(f"⚡ FASTSTREAM v1.2 - CON BÚSQUEDA Y RENOMBRADO JELLYFIN")
     print("="*70)
-    year_str = f"({meta['year']})" if meta.get('year') else ""
-    print(f"🎬 Título:   {meta['title']} {year_str}")
+    print(f"🎬 Título:   {meta['title']} ({meta.get('year') or 'N/A'})")
     print(f"📂 Archivo:  {abs_target}")
     print(f"🌐 URL Web:  \033[1;32m{stream_url}\033[0m")
     if meta.get("poster_url"):
