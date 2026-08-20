@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v2.0.3 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
+⚡ FastStream v2.0.4 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
 Features:
 - Multi-Threaded HTTP Engine (Non-blocking video streaming + instant API searches/navigation)
-- True-Polarity Terminal QR Code Generator (Reed-Solomon GF(256) with white quiet zone border)
+- Restored PureTerminalQR Engine (Original proven ISO/IEC 18004 Reed-Solomon GF(256) implementation)
+- Universal Search: Text Title, Year, TMDB ID, IMDb ID (ttXXXXXXX), IMDb URLs, or TMDB URLs
 - Safe Logging & Exception Handling (Immune to Python 3.12 HTTPStatus enum errors)
 - Glassmorphic Netflix/FastMovie Catalog Grid View for folders and series collections
 - Live Client-Side Instant Filtering & Search in Catalog view (keyboard shortcut '/')
 - Terminal Interactive Live Progress Bar during folder metadata scans
 - Robust Safe HTML & JS Entity Escaping in Search Modal (Zero JS SyntaxErrors on quotes)
 - In-Memory Cache & Dynamic Catalog Memory Sync upon 1-Click Jellyfin Renaming
-- Universal Search: Text Title, Year, TMDB ID, or IMDb ID (ttXXXXXXX or IMDb URL)
 - Clean & Silent Socket Handling (Zero BrokenPipe/ConnectionReset noise)
 - Native Favicon Handling (Zero 404 clutter)
 - Web Remote Shutdown (1-Click button to stop server & release port directly from browser)
@@ -87,155 +87,207 @@ def find_available_port(base_port, max_attempts=50, is_explicit=False):
     print(f"❌ Error: No se encontró ningún puerto libre en el rango {base_port}-{base_port+max_attempts}.")
     sys.exit(1)
 
-# Pure Python Reed-Solomon GF(256) QR Code Terminal Engine
-class PureQR:
-    EXP_TABLE = [0] * 512
-    LOG_TABLE = [0] * 256
-    
+# Pure Python Reed-Solomon GF(256) Terminal QR Code Engine (Canonical Proven Implementation)
+class PureTerminalQR:
+    EXP = [1] * 512
+    LOG = [0] * 256
+    _init_done = False
+
     @classmethod
-    def _init_tables(cls):
-        if cls.EXP_TABLE[1] != 0: return
+    def _init(cls):
+        if cls._init_done: return
         x = 1
         for i in range(255):
-            cls.EXP_TABLE[i] = x
-            cls.EXP_TABLE[i + 255] = x
-            cls.LOG_TABLE[x] = i
-            x <<= 1
-            if x & 0x100: x ^= 0x11D
+            cls.EXP[i] = x
+            cls.EXP[i + 255] = x
+            cls.LOG[x] = i
+            x = (x << 1) ^ (0x11d if x & 0x80 else 0)
+        cls.LOG[0] = 0
+        cls._init_done = True
 
     @classmethod
-    def _gmul(cls, a, b):
+    def gmul(cls, a, b):
         if a == 0 or b == 0: return 0
-        return cls.EXP_TABLE[cls.LOG_TABLE[a] + cls.LOG_TABLE[b]]
+        return cls.EXP[cls.LOG[a] + cls.LOG[b]]
 
     @classmethod
-    def _rs_poly(cls, nsym):
+    def rs_poly(cls, n):
         g = [1]
-        for i in range(nsym):
-            g_next = [0] * (len(g) + 1)
-            for j in range(len(g)):
-                g_next[j] ^= cls._gmul(g[j], cls.EXP_TABLE[i])
-                g_next[j + 1] ^= g[j]
-            g = g_next
+        for i in range(n):
+            g = cls.poly_mul(g, [1, cls.EXP[i]])
         return g
 
     @classmethod
-    def _rs_encode(cls, data, nsym):
-        cls._init_tables()
-        gen = cls._rs_poly(nsym)
+    def poly_mul(cls, p, q):
+        r = [0] * (len(p) + len(q) - 1)
+        for i, a in enumerate(p):
+            for j, b in enumerate(q):
+                r[i + j] ^= cls.gmul(a, b)
+        return r
+
+    @classmethod
+    def rs_encode(cls, data, nsym):
+        cls._init()
+        gen = cls.rs_poly(nsym)
         res = [0] * (len(data) + nsym)
-        for i in range(len(data)): res[i] = data[i]
+        res[:len(data)] = data
         for i in range(len(data)):
             coef = res[i]
             if coef != 0:
-                for j in range(1, len(gen)):
-                    res[i + j] ^= cls._gmul(gen[j], coef)
-        return res[len(data):]
+                for j in range(len(gen)):
+                    res[i + j] ^= cls.gmul(gen[j], coef)
+        return list(data) + res[len(data):]
 
     @classmethod
-    def generate_matrix(cls, text):
-        data = text.encode('utf-8')
-        version = 3 if len(data) <= 42 else (4 if len(data) <= 62 else 6)
-        size = 17 + 4 * version
+    def generate(cls, text):
+        cls._init()
+        data_bytes = text.encode('utf-8')
+        length = len(data_bytes)
+        
+        if length <= 17:
+            ver = 1; size = 21; total_cw = 26; ec_cw = 7
+        elif length <= 32:
+            ver = 2; size = 25; total_cw = 44; ec_cw = 10
+        elif length <= 53:
+            ver = 3; size = 29; total_cw = 70; ec_cw = 15
+        else:
+            ver = 4; size = 33; total_cw = 100; ec_cw = 20
+
+        data_cap = total_cw - ec_cw
+        bits = [0, 1, 0, 0]
+        for i in range(7, -1, -1):
+            bits.append((length >> i) & 1)
+        for b in data_bytes:
+            for i in range(7, -1, -1):
+                bits.append((b >> i) & 1)
+        bits.extend([0] * min(4, data_cap * 8 - len(bits)))
+        while len(bits) % 8 != 0:
+            bits.append(0)
+        pad = [0xEC, 0x11]
+        pidx = 0
+        while len(bits) < data_cap * 8:
+            pb = pad[pidx % 2]
+            for i in range(7, -1, -1):
+                bits.append((pb >> i) & 1)
+            pidx += 1
+
+        raw_cw = []
+        for i in range(0, len(bits), 8):
+            val = 0
+            for j in range(8):
+                val = (val << 1) | bits[i + j]
+            raw_cw.append(val)
+
+        all_cw = cls.rs_encode(raw_cw, ec_cw)
+        all_bits = []
+        for cw in all_cw:
+            for i in range(7, -1, -1):
+                all_bits.append((cw >> i) & 1)
+
         matrix = [[None] * size for _ in range(size)]
-        
-        def set_p(r, c, p):
-            for i in range(len(p)):
-                for j in range(len(p[0])):
-                    matrix[r+i][c+j] = p[i][j]
+        reserved = [[False] * size for _ in range(size)]
 
-        pat = [
-            [1,1,1,1,1,1,1],
-            [1,0,0,0,0,0,1],
-            [1,0,1,1,1,0,1],
-            [1,0,1,1,1,0,1],
-            [1,0,1,1,1,0,1],
-            [1,0,0,0,0,0,1],
-            [1,1,1,1,1,1,1]
-        ]
-        set_p(0, 0, pat)
-        set_p(0, size - 7, pat)
-        set_p(size - 7, 0, pat)
-        
+        def set_val(r, c, v):
+            matrix[r][c] = v
+            reserved[r][c] = True
+
+        def add_finder(tr, lc):
+            for r in range(7):
+                for c in range(7):
+                    if r in (0, 6) or c in (0, 6) or (2 <= r <= 4 and 2 <= c <= 4):
+                        set_val(tr + r, lc + c, 1)
+                    else:
+                        set_val(tr + r, lc + c, 0)
+            for r in range(-1, 8):
+                for c in range(-1, 8):
+                    rr, cc = tr + r, lc + c
+                    if 0 <= rr < size and 0 <= cc < size and not reserved[rr][cc]:
+                        set_val(rr, cc, 0)
+
+        add_finder(0, 0)
+        add_finder(0, size - 7)
+        add_finder(size - 7, 0)
+
+        if ver >= 2:
+            align_pos = {2: 18, 3: 22, 4: 26}[ver]
+            for r in range(-2, 3):
+                for c in range(-2, 3):
+                    rr, cc = align_pos + r, align_pos + c
+                    if not reserved[rr][cc]:
+                        if r in (-2, 2) or c in (-2, 2) or (r == 0 and c == 0):
+                            set_val(rr, cc, 1)
+                        else:
+                            set_val(rr, cc, 0)
+
         for i in range(size):
-            if matrix[6][i] is None: matrix[6][i] = 1 if i % 2 == 0 else 0
-            if matrix[i][6] is None: matrix[i][6] = 1 if i % 2 == 0 else 0
+            if not reserved[6][i]: set_val(6, i, 1 if i % 2 == 0 else 0)
+            if not reserved[i][6]: set_val(i, 6, 1 if i % 2 == 0 else 0)
 
-        cap = 44 if version == 3 else (64 if version == 4 else 108)
-        nsym = 15 if version == 3 else (18 if version == 4 else 24)
-        
-        bit_buf = [0, 1, 0, 0] # Byte mode
-        length = len(data)
-        for i in range(7, -1, -1): bit_buf.append((length >> i) & 1)
-        for b in data:
-            for i in range(7, -1, -1): bit_buf.append((b >> i) & 1)
-        bit_buf.extend([0, 0, 0, 0])
-        while len(bit_buf) % 8 != 0: bit_buf.append(0)
-        
-        pads = [0xEC, 0x11]
-        pad_idx = 0
-        raw_bytes = []
-        for i in range(0, len(bit_buf), 8):
-            byte = 0
-            for j in range(8): byte = (byte << 1) | bit_buf[i+j]
-            raw_bytes.append(byte)
-            
-        while len(raw_bytes) < (cap - nsym):
-            raw_bytes.append(pads[pad_idx % 2])
-            pad_idx += 1
-            
-        ecc = cls._rs_encode(raw_bytes, nsym)
-        all_bytes = raw_bytes + ecc
-        
-        final_bits = []
-        for b in all_bytes:
-            for i in range(7, -1, -1): final_bits.append((b >> i) & 1)
-            
+        set_val(size - 8, 8, 1)
+
+        for i in range(9):
+            if not reserved[8][i]: reserved[8][i] = True
+            if not reserved[i][8]: reserved[i][8] = True
+        for i in range(size - 8, size):
+            if not reserved[8][i]: reserved[8][i] = True
+            if not reserved[i][8]: reserved[i][8] = True
+
         bit_idx = 0
-        right = size - 1
-        up = True
-        while right > 0:
-            if right == 6: right -= 1
-            rows = range(size - 1, -1, -1) if up else range(size)
-            for r in rows:
-                for c in (right, right - 1):
-                    if matrix[r][c] is None:
-                        val = final_bits[bit_idx] if bit_idx < len(final_bits) else 0
+        r, c = size - 1, size - 1
+        dir_up = True
+        while c > 0:
+            if c == 6: c -= 1
+            for i in range(size):
+                curr_r = (size - 1 - i) if dir_up else i
+                for col_offset in [0, -1]:
+                    curr_c = c + col_offset
+                    if not reserved[curr_r][curr_c]:
+                        bit_val = all_bits[bit_idx] if bit_idx < len(all_bits) else 0
+                        if (curr_r + curr_c) % 2 == 0:
+                            bit_val ^= 1
+                        matrix[curr_r][curr_c] = bit_val
                         bit_idx += 1
-                        if (r + c) % 2 == 0: val ^= 1 # Mask pattern 0
-                        matrix[r][c] = val
-            right -= 2
-            up = not up
+            c -= 2
+            dir_up = not dir_up
 
-        return matrix
+        fmt_bits = [1,1,1,0,1,1,1,1,1,0,0,0,1,0,0]
+        pos_tl = [(8,0),(8,1),(8,2),(8,3),(8,4),(8,5),(8,7),(8,8),(7,8),(5,8),(4,8),(3,8),(2,8),(1,8),(0,8)]
+        for (fr, fc), fb in zip(pos_tl, fmt_bits):
+            matrix[fr][fc] = fb
+        for idx in range(7):
+            matrix[size - 1 - idx][8] = fmt_bits[idx]
+        for idx in range(8):
+            matrix[8][size - 8 + idx] = fmt_bits[7 + idx]
 
-def print_qr_terminal(url):
-    try:
-        matrix = PureQR.generate_matrix(url)
-        size = len(matrix)
-        quiet = 2
-        full_size = size + 2 * quiet
+        border = 2
+        full_size = size + 2 * border
         grid = [[0] * full_size for _ in range(full_size)]
         for r in range(size):
             for c in range(size):
-                grid[r + quiet][c + quiet] = matrix[r][c]
+                grid[r + border][c + border] = matrix[r][c] or 0
 
-        print("\n  📱 Escanea con la cámara de tu teléfono o tablet:")
+        lines = []
         for r in range(0, full_size, 2):
-            line = ["  \033[47;30m"]
+            line = "  "
             for c in range(full_size):
                 top = grid[r][c]
-                bot = grid[r+1][c] if r + 1 < full_size else 0
+                bot = grid[r + 1][c] if r + 1 < full_size else 0
                 if top == 1 and bot == 1:
-                    line.append("█")
+                    line += " "
                 elif top == 1 and bot == 0:
-                    line.append("▀")
+                    line += "▄"
                 elif top == 0 and bot == 1:
-                    line.append("▄")
+                    line += "▀"
                 else:
-                    line.append(" ")
-            line.append("\033[0m")
-            print("".join(line))
+                    line += "█"
+            lines.append(line)
+        return "\n".join(lines)
+
+def print_qr_terminal(url):
+    try:
+        qr_str = PureTerminalQR.generate(url)
+        print("\n  📱 Escanea con tu celular o tablet para abrir al instante:\n")
+        print(qr_str)
         print("")
     except Exception:
         pass
@@ -307,7 +359,12 @@ def query_tmdb_search(query, year=None, api_key=None):
     if cache_key in TMDB_MEMORY_CACHE:
         return TMDB_MEMORY_CACHE[cache_key]
 
-    # 1. Búsqueda por IMDb ID
+    # Extraer TMDB ID de URL directa (ej: https://www.themoviedb.org/movie/454458-uglydolls)
+    tmdb_url_match = re.search(r'themoviedb\.org/(?:movie|tv)/(\d+)', query_str, re.I)
+    if tmdb_url_match:
+        query_str = tmdb_url_match.group(1)
+
+    # 1. Búsqueda por IMDb ID (ej: tt1946502 o https://www.imdb.com/title/tt1946502/)
     imdb_match = re.search(r'(tt\d{7,8})', query_str, re.I)
     if imdb_match:
         imdb_id = imdb_match.group(1)
@@ -317,6 +374,7 @@ def query_tmdb_search(query, year=None, api_key=None):
             with urllib.request.urlopen(req, timeout=4) as resp:
                 data = json.loads(resp.read().decode())
                 results = []
+                # Revisar películas
                 for m in data.get('movie_results', []):
                     results.append({
                         "id": m["id"],
@@ -327,6 +385,19 @@ def query_tmdb_search(query, year=None, api_key=None):
                         "poster_url": f"https://image.tmdb.org/t/p/w500{m['poster_path']}" if m.get("poster_path") else None,
                         "backdrop_url": f"https://image.tmdb.org/t/p/w1280{m['backdrop_path']}" if m.get("backdrop_path") else None,
                         "rating": round(m.get("vote_average", 0), 1),
+                        "imdb_id": imdb_id
+                    })
+                # Revisar series de TV
+                for s in data.get('tv_results', []):
+                    results.append({
+                        "id": s["id"],
+                        "title": s.get("name", ""),
+                        "original_title": s.get("original_name", ""),
+                        "year": (s.get("first_air_date") or "")[:4],
+                        "overview": s.get("overview", "Sin sinopsis."),
+                        "poster_url": f"https://image.tmdb.org/t/p/w500{s['poster_path']}" if s.get("poster_path") else None,
+                        "backdrop_url": f"https://image.tmdb.org/t/p/w1280{s['backdrop_path']}" if s.get("backdrop_path") else None,
+                        "rating": round(s.get("vote_average", 0), 1),
                         "imdb_id": imdb_id
                     })
                 if results:
@@ -359,8 +430,14 @@ def query_tmdb_search(query, year=None, api_key=None):
         except Exception:
             pass
 
-    # 3. Búsqueda por texto
-    enc_q = urllib.parse.quote(query_str)
+    # 3. Búsqueda por texto (limpiando URLs si se pegó un enlace)
+    clean_text = query_str
+    if query_str.startswith("http"):
+        clean_text = query_str.split("/")[-1].replace("-", " ").replace("_", " ").strip()
+        if not clean_text:
+            clean_text = query_str.split("/")[-2].replace("-", " ").replace("_", " ").strip()
+
+    enc_q = urllib.parse.quote(clean_text)
     url = f"https://api.themoviedb.org/3/search/movie?api_key={key}&query={enc_q}&language=es-MX"
     if year: url += f"&year={year}"
     
@@ -1181,14 +1258,14 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
     <div id="searchModal" class="modal-overlay">
         <div class="modal-card">
             <div class="modal-header">
-                <h2>🔍 Buscar por Título, TMDB ID o IMDb ID (ttXXXXXXX)</h2>
+                <h2>🔍 Buscar por Título, TMDB ID, IMDb ID o Enlace</h2>
                 <button class="close-btn" onclick="closeSearchModal()">✕</button>
             </div>
             <div style="background:rgba(56, 189, 248, 0.1); border:1px solid rgba(56, 189, 248, 0.25); border-radius:8px; padding:10px 14px; display:flex; align-items:center; gap:10px;">
                 <span style="font-size:18px;">📄</span>
                 <span style="color:#cbd5e1; font-size:13px;">Archivo a renombrar: <b style="color:#38bdf8; word-break:break-all;">{safe_filename}</b></span>
             </div>
-            <p style="color:#94a3b8; font-size:13px; margin:0;">Escribe el <b>título</b>, el <b>ID de IMDb</b> (ej. <code>tt3495184</code>), o el <b>TMDB ID</b>:</p>
+            <p style="color:#94a3b8; font-size:13px; margin:0;">Escribe el <b>título</b>, el <b>ID de IMDb</b> (ej. <code>tt1946502</code> o URL de IMDb), o el <b>TMDB ID</b>:</p>
             <div class="search-box">
                 <input type="text" id="searchInput" class="search-input" value="{safe_clean_title}" placeholder="Título, ID de IMDb o TMDB ID..." onkeydown="if(event.key==='Enter')performTMDBSearch()">
                 <input type="text" id="yearInput" class="search-input" style="max-width:90px;" value="{meta.get('year') or ''}" placeholder="Año..." onkeydown="if(event.key==='Enter')performTMDBSearch()">
@@ -1225,7 +1302,7 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                 const res = await fetch(`/api/search?q=${{encodeURIComponent(query)}}&year=${{encodeURIComponent(year)}}`);
                 const results = await res.json();
                 if (!results || !results.length) {{
-                    container.innerHTML = `<div style="color:#ef4444; text-align:center; padding:20px; font-size:14px;">❌ No se encontraron coincidencias para "${{escapeHtml(query)}}".<br><span style="color:#94a3b8; font-size:12px;">Prueba buscando por su código de IMDb (ej: tt3495184) o su ID numérico de TMDB.</span></div>`;
+                    container.innerHTML = `<div style="color:#ef4444; text-align:center; padding:20px; font-size:14px;">❌ No se encontraron coincidencias para "${{escapeHtml(query)}}".<br><span style="color:#94a3b8; font-size:12px;">Prueba buscando por su código de IMDb (ej: tt1946502), TMDB ID (ej: 454458) o limpiando el título.</span></div>`;
                     return;
                 }}
                 
@@ -1613,7 +1690,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v2.0.3 - STREAMING & GLASSMORPHIC MEDIA HUB")
+    print(f"⚡ FASTSTREAM v2.0.4 - STREAMING & GLASSMORPHIC MEDIA HUB")
     print("="*70)
     if is_dir:
         print(f"📁 Modo:     Catálogo de Carpeta ({len(file_list)} videos)")
