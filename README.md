@@ -1,14 +1,16 @@
 # ⚡ FastStream
 
 > **Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Auditor CLI**  
-> Transmite cualquier archivo de video o carpeta completa por HTTP al instante en tu red local con soporte nativo de saltos en la línea de tiempo (*Byte-Range RFC 7233*), enriquecimiento automático de carátulas TMDB y renombrado canónico para Jellyfin / FastMovie.
+> Transmite cualquier archivo de video o carpeta completa por HTTP al instante en tu red local con soporte nativo de saltos en la línea de tiempo (*Byte-Range RFC 7233*), enriquecimiento automático de carátulas TMDB, renombrado canónico y control de apagado remoto.
 
 ---
 
 ## ✨ Características Principales
 
 - 🚀 **100% Cero Dependencias de Python:** Construido exclusivamente con la biblioteca estándar (`http.server` + `socketserver` + `struct`). Cero `pip install`, cero `npm`, cero compiladores.
-- ⚡ **Asignación Inteligente de Puertos (Multi-Instancia):** Si el puerto base `8090` está ocupado por otra instancia o servicio, `faststream` busca y se enlaza automáticamente al siguiente puerto libre (`8091`, `8092`...), permitiendo transmitir múltiples películas a la vez sin conflictos.
+- 🛑 **Apagado Remoto desde el Navegador:** Botón integrado en la web para detener el servidor CLI y liberar el puerto desde tu celular, tablet o PC sin tener que ir a la consola.
+- 📱 **Código QR Nativo en Terminal:** Generador matemático en Python puro que dibuja el código QR directamente en consola para escanear y abrir al instante.
+- ⚡ **Asignación Inteligente de Puertos (Multi-Instancia):** Si el puerto base `8090` está ocupado, busca automáticamente el siguiente puerto libre (`8091`, `8092`...), permitiendo múltiples transmisiones simultáneas.
 - 🛠️ **Funciona con o sin FFmpeg:** 
   - **Sin FFmpeg:** Funciona al 100% transmitiendo por HTTP con saltos instantáneos, scraping de TMDB, carátulas, modal interactivo, renombrado Jellyfin y lectura nativa de duración con su propio parser de átomos MP4 en Python puro.
   - **Con FFmpeg / FFprobe (Opcional):** Si está instalado en el sistema, enriquece adicionalmente la ficha técnica con la resolución exacta, códec de video y pistas de audio.
@@ -16,7 +18,6 @@
 - 🖼️ **Enriquecimiento Automático con TMDB:** Consulta la API de TheMovieDB en tiempo real para descargar carátulas en alta resolución, fondos de pantalla (*backdrops*), año, calificación y sinopsis oficial.
 - 🔍 **Modal Interactivo de Búsqueda y Corrección:** Si el nombre del archivo es ambiguo, abre un buscador en vivo en la interfaz web para afinar título y año.
 - 🏷️ **Renombrado Atómico a Estándar Jellyfin:** Renombra físicamente el archivo en el disco con 1 solo clic al formato canónico `Título (Año) [tmdbid-ID].mp4`.
-- 📱 **Código QR y Detección de IP LAN:** Imprime el enlace de red local (`http://192.168.X.X:8090/`) y un código QR para abrir el streaming en teléfonos, tablets o Smart TVs en 1 segundo.
 - 📁 **Navegador de Series / Carpetas:** Si apuntas a una carpeta completa, genera un menú interactivo estilo Hub para reproducir cualquier episodio.
 
 ---
@@ -43,11 +44,9 @@ faststream "/media/Films/Patria.mp4"
 faststream "/media/Series/Evil/Season03/"
 ```
 
-### 3. Especificar un puerto personalizado:
-```bash
-faststream pelicula.mp4 -p 8080
-```
-*(Si no especificas puerto, usará el `8090` o el siguiente puerto libre disponible automáticamente).*
+### 3. Detener el servidor:
+* **Desde la terminal:** Presionando `Ctrl + C`.
+* **Desde el navegador:** Haciendo clic en el botón rojo **"🛑 Apagar"** en la interfaz web.
 
 ### 4. Configurar tu propia API Key de TMDB (Opcional):
 Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar de inmediato. Si prefieres usar tu propia clave oficial de TheMovieDB:
@@ -74,16 +73,15 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 | **Lenguaje / Motor** | **Python 3 Puro** (Stdlib) | **Rust** (Actix-web) | **Rust** (Hyper / Tokio) |
 | **Dependencias de Librerías** | **0 dependencias** (Cero pip/npm) | Compilado / Binario | Compilado / Binario |
 | **Herramientas del Sistema** | **Ninguna obligatoria** (FFprobe opcional) | Ninguna | Ninguna |
+| **Apagado Remoto desde Web** | ✅ **1-Click (`🛑 Apagar Servidor`)** | ❌ Solo `Ctrl+C` en consola | ❌ Solo `Ctrl+C` en consola |
 | **Multi-Instancia Automática** | ✅ **Auto-Port Hunting (8090, 8091...)** | ❌ Falla con `Port in use` | ❌ Falla con `Port in use` |
-| **Peso del Ejecutable** | **~20 KB** (Script autónomo) | Binario (~15 MB) | Binario (~6 MB) |
+| **Código QR en Consola** | ✅ **Nativo en Python Puro** | ✅ Requiere flag | ❌ No |
+| **Peso del Ejecutable** | **~25 KB** (Script autónomo) | Binario (~15 MB) | Binario (~6 MB) |
 | **Propósito Principal** | **Streaming Multimedia, Auditoría y Renombrado** | **Compartir archivos y subidas rápidas** | **Servidor de archivos estático con WebDAV** |
 | **Reproductor de Video** | 🎬 **Cinematográfico (Glassmorphism + Backdrop)** | 📄 Básico del navegador (`<video>` plano) | 📄 Básico del navegador (`<video>` plano) |
 | **Metadatos y Carátulas TMDB** | ✅ **Automático + Buscador en vivo** | ❌ Inexistente | ❌ Inexistente |
 | **Renombrado a Estándar Jellyfin** | ✅ **1-Click (`Título (Año) [tmdbid-ID].mp4`)** | ❌ No disponible | ❌ Solo renombrado manual plano |
 | **Soporte *Range: bytes* (Seeking)** | ✅ **RFC 7233 Nativo** (<0.1s de latencia) | ✅ Soportado | ✅ Soportado |
-| **Soporte WebDAV** | ❌ No (no es un disco de red) | ❌ No | ✅ **Sí** |
-| **Subida de Archivos / Drag & Drop** | ❌ No (auditoría y preservación) | ✅ Sí | ✅ Sí |
-| **Descarga en `.zip` / `.tar.gz`** | ❌ No | ✅ Sí | ✅ Sí |
 
 ---
 
@@ -96,6 +94,8 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 - [x] Configuración modular y persistente de API Key de TMDB.
 - [x] Parser nativo de átomos MP4 en Python puro (independencia total de FFprobe).
 - [x] Asignación inteligente de puertos libres (*Auto-Port Hunting*).
+- [x] Generador de códigos QR nativo en terminal.
+- [x] Apagado y liberación de puerto remota desde el navegador web.
 - [ ] Selector de pistas de audio y subtítulos incrustados (SRT / ASS / VTT) en el reproductor web.
 - [ ] Modo de transcodificación ligera al vuelo para códecs no soportados nativamente por navegadores (HEVC / AC3).
 - [ ] Modo batch CLI (`faststream --batch-rename /carpeta/`) para renombrado masivo asistido.
