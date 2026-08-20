@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v1.2.0 - Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Renamer CLI
+⚡ FastStream v1.3.0 - Zero-Dependency Instant HTTP Range Video Streamer & Jellyfin Renamer CLI
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
 Features:
 - Instant HTTP 206 Partial Content Byte-Range Video Streaming
+- Configurable TMDB API Key (CLI flag, ENV var, or ~/.config/faststream/config.json)
 - Automatic TMDB Poster & Backdrop Enrichment
 - Interactive Manual TMDB Search & Correction Modal
 - 1-Click Atomic Jellyfin Standard Renaming (`Title (Year) [tmdbid-ID].mp4`)
@@ -14,7 +15,33 @@ Features:
 
 import sys, os, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re
 
-TMDB_API_KEY = "a07e22bc18f5cb106bfe4cc1f83ad8ed"
+CONFIG_DIR = os.path.expanduser("~/.config/faststream")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+DEFAULT_FALLBACK_KEY = "a07e22bc18f5cb106bfe4cc1f83ad8ed"
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_config(cfg):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+
+def get_tmdb_api_key(cli_key=None):
+    if cli_key:
+        return cli_key.strip()
+    if os.environ.get("TMDB_API_KEY"):
+        return os.environ.get("TMDB_API_KEY").strip()
+    cfg = load_config()
+    if cfg.get("tmdb_api_key"):
+        return cfg.get("tmdb_api_key").strip()
+    return DEFAULT_FALLBACK_KEY
 
 def get_lan_ip():
     try:
@@ -30,7 +57,6 @@ VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.ts', '.m4v', '.webm'}
 
 def clean_search_title(fname):
     name = os.path.splitext(os.path.basename(fname))[0]
-    # Extraer tmdbid si ya existe
     tmdb_match = re.search(r'\[tmdbid-(\d+)\]', name)
     tmdb_id = tmdb_match.group(1) if tmdb_match else None
     
@@ -43,14 +69,15 @@ def clean_search_title(fname):
     clean = re.sub(r'\s+', ' ', clean)
     return clean, year, tmdb_id
 
-def query_tmdb_search(query, year=None):
-    if not TMDB_API_KEY or not query:
+def query_tmdb_search(query, year=None, api_key=None):
+    key = api_key or get_tmdb_api_key()
+    if not key or not query:
         return []
     try:
-        url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={urllib.parse.quote(query)}&language=es-MX"
+        url = f"https://api.themoviedb.org/3/search/movie?api_key={key}&query={urllib.parse.quote(query)}&language=es-MX"
         if year:
             url += f"&year={year}"
-        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.2"})
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.3"})
         with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode())
             results = data.get("results", [])
@@ -70,10 +97,11 @@ def query_tmdb_search(query, year=None):
     except Exception:
         return []
 
-def fetch_tmdb_by_id(tmdb_id):
+def fetch_tmdb_by_id(tmdb_id, api_key=None):
+    key = api_key or get_tmdb_api_key()
     try:
-        url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={TMDB_API_KEY}&language=es-MX"
-        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.2"})
+        url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={key}&language=es-MX"
+        req = urllib.request.Request(url, headers={"User-Agent": "FastStream/1.3"})
         with urllib.request.urlopen(req, timeout=4) as resp:
             m = json.loads(resp.read().decode())
             return {
@@ -88,7 +116,7 @@ def fetch_tmdb_by_id(tmdb_id):
     except Exception:
         return {}
 
-def get_file_metadata(file_path):
+def get_file_metadata(file_path, api_key=None):
     cmd = ['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-of', 'json', file_path]
     raw_fname = os.path.basename(file_path)
     clean_t, yr, tmdb_id = clean_search_title(raw_fname)
@@ -126,14 +154,12 @@ def get_file_metadata(file_path):
     except Exception:
         pass
     
-    # Buscar por TMDB ID si ya está en el nombre, o por título + año
     tmdb = {}
     if tmdb_id:
-        tmdb = fetch_tmdb_by_id(tmdb_id)
+        tmdb = fetch_tmdb_by_id(tmdb_id, api_key)
     if not tmdb:
-        # Si tiene año en tags internos
         search_year = yr or (tags.get('date') if 'tags' in locals() and tags.get('date') else None)
-        search_res = query_tmdb_search(clean_t, search_year)
+        search_res = query_tmdb_search(clean_t, search_year, api_key)
         if search_res:
             tmdb = search_res[0]
             tmdb['poster_url'] = f"https://image.tmdb.org/t/p/w500{tmdb['poster_url'].split('/')[-1]}" if tmdb.get('poster_url') else None
@@ -633,7 +659,7 @@ def generate_player_html(target_path, meta, is_dir=False, file_list=None):
 </body>
 </html>"""
 
-def run_faststream(target, port=8090):
+def run_faststream(target, port=8090, api_key=None):
     abs_target = os.path.abspath(target)
     if not os.path.exists(abs_target):
         print(f"❌ Error: La ruta '{target}' no existe.")
@@ -653,10 +679,10 @@ def run_faststream(target, port=8090):
             print(f"❌ No se encontraron archivos de video en '{target}'.")
             sys.exit(1)
         current_file = file_list[0]
-        meta = get_file_metadata(current_file)
+        meta = get_file_metadata(current_file, api_key)
     else:
         print("🔍 Consultando metadatos iniciales...")
-        meta = get_file_metadata(abs_target)
+        meta = get_file_metadata(abs_target, api_key)
 
     class FastStreamHandler(http.server.BaseHTTPRequestHandler):
         def do_HEAD(self):
@@ -679,7 +705,7 @@ def run_faststream(target, port=8090):
                 qs = urllib.parse.parse_qs(parsed.query)
                 q = qs.get("q", [""])[0]
                 y = qs.get("year", [""])[0]
-                results = query_tmdb_search(q, y)
+                results = query_tmdb_search(q, y, api_key)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
@@ -687,7 +713,7 @@ def run_faststream(target, port=8090):
                 return
 
             if parsed.path == "/" or parsed.path == "/index.html":
-                meta = get_file_metadata(current_file)
+                meta = get_file_metadata(current_file, api_key)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
@@ -700,7 +726,7 @@ def run_faststream(target, port=8090):
                 idx = int(query.get("index", ["0"])[0])
                 if 0 <= idx < len(file_list):
                     current_file = file_list[idx]
-                    meta = get_file_metadata(current_file)
+                    meta = get_file_metadata(current_file, api_key)
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.end_headers()
@@ -784,7 +810,7 @@ def run_faststream(target, port=8090):
                     current_file = new_full_path
                     if not is_dir:
                         abs_target = new_full_path
-                    meta = get_file_metadata(current_file)
+                    meta = get_file_metadata(current_file, api_key)
                     
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -810,7 +836,7 @@ def run_faststream(target, port=8090):
     stream_url = f"http://{lan_ip}:{port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v1.2 - CON BÚSQUEDA Y RENOMBRADO JELLYFIN")
+    print(f"⚡ FASTSTREAM v1.3 - CON BÚSQUEDA Y RENOMBRADO JELLYFIN")
     print("="*70)
     print(f"🎬 Título:   {meta['title']} ({meta.get('year') or 'N/A'})")
     print(f"📂 Archivo:  {abs_target}")
@@ -829,11 +855,22 @@ def run_faststream(target, port=8090):
 
 def main():
     parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante en tu red local.")
-    parser.add_argument("target", help="Ruta al archivo de video o carpeta a transmitir.")
+    parser.add_argument("target", nargs="?", help="Ruta al archivo de video o carpeta a transmitir.")
     parser.add_argument("-p", "--port", type=int, default=8090, help="Puerto HTTP (por defecto: 8090).")
+    parser.add_argument("--tmdb-key", help="Clave de API de TheMovieDB a usar.")
+    parser.add_argument("--set-tmdb-key", help="Guardar tu clave de API de TMDB en ~/.config/faststream/config.json permanentemente.")
     args = parser.parse_args()
     
-    run_faststream(args.target, args.port)
+    if args.set_tmdb_key:
+        save_config({"tmdb_api_key": args.set_tmdb_key.strip()})
+        print(f"✅ Clave TMDB guardada permanentemente en {CONFIG_FILE}!")
+        sys.exit(0)
+
+    if not args.target:
+        parser.print_help()
+        sys.exit(1)
+        
+    run_faststream(args.target, args.port, args.tmdb_key)
 
 if __name__ == "__main__":
     main()
