@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v2.0.2 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
+⚡ FastStream v2.0.3 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
 Features:
+- Multi-Threaded HTTP Engine (Non-blocking video streaming + instant API searches/navigation)
+- True-Polarity Terminal QR Code Generator (Reed-Solomon GF(256) with white quiet zone border)
+- Safe Logging & Exception Handling (Immune to Python 3.12 HTTPStatus enum errors)
 - Glassmorphic Netflix/FastMovie Catalog Grid View for folders and series collections
 - Live Client-Side Instant Filtering & Search in Catalog view (keyboard shortcut '/')
 - Terminal Interactive Live Progress Bar during folder metadata scans
@@ -14,7 +17,6 @@ Features:
 - Clean & Silent Socket Handling (Zero BrokenPipe/ConnectionReset noise)
 - Native Favicon Handling (Zero 404 clutter)
 - Web Remote Shutdown (1-Click button to stop server & release port directly from browser)
-- Pure-Python Terminal QR Code Generator (Reed-Solomon GF(256) without external binaries)
 - Smart Auto-Port Discovery (Auto-allocates next free port 8090, 8091, 8092... if busy)
 - Multi-Instance Support (Run multiple simultaneous streams without conflicts)
 - 100% Zero Python Dependencies (No pip/npm, pure standard library)
@@ -211,20 +213,30 @@ def print_qr_terminal(url):
     try:
         matrix = PureQR.generate_matrix(url)
         size = len(matrix)
-        print("\n  📱 Escanea con tu teléfono o tablet para ver al instante:")
-        print("  " + "▄" * (size + 4))
-        for r in range(0, size, 2):
-            line = ["  ██"]
+        quiet = 2
+        full_size = size + 2 * quiet
+        grid = [[0] * full_size for _ in range(full_size)]
+        for r in range(size):
             for c in range(size):
-                top = matrix[r][c]
-                bot = matrix[r+1][c] if r + 1 < size else 0
-                if top == 1 and bot == 1: line.append(" ")
-                elif top == 1 and bot == 0: line.append("▄")
-                elif top == 0 and bot == 1: line.append("▀")
-                else: line.append("█")
-            line.append("██")
+                grid[r + quiet][c + quiet] = matrix[r][c]
+
+        print("\n  📱 Escanea con la cámara de tu teléfono o tablet:")
+        for r in range(0, full_size, 2):
+            line = ["  \033[47;30m"]
+            for c in range(full_size):
+                top = grid[r][c]
+                bot = grid[r+1][c] if r + 1 < full_size else 0
+                if top == 1 and bot == 1:
+                    line.append("█")
+                elif top == 1 and bot == 0:
+                    line.append("▀")
+                elif top == 0 and bot == 1:
+                    line.append("▄")
+                else:
+                    line.append(" ")
+            line.append("\033[0m")
             print("".join(line))
-        print("  " + "▀" * (size + 4) + "\n")
+        print("")
     except Exception:
         pass
 
@@ -234,7 +246,6 @@ def print_progress_bar(current, total, title="", width=30):
     filled = int(width * current // total) if total > 0 else width
     bar = "█" * filled + "░" * (width - filled)
     
-    # Truncate title if too long for terminal
     safe_title = (title[:30] + '..') if len(title) > 32 else title
     sys.stdout.write(f"\r  🔍 [{bar}] {current}/{total} ({pct:.0f}%) | {safe_title:<32}")
     sys.stdout.flush()
@@ -1195,6 +1206,9 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
 
         function openSearchModal() {{
             document.getElementById('searchModal').style.display = 'flex';
+            setTimeout(() => {{
+                document.getElementById('searchInput').focus();
+            }}, 50);
             performTMDBSearch();
         }}
         function closeSearchModal() {{
@@ -1262,7 +1276,6 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                 }});
                 const data = await res.json();
                 if (data.success) {{
-                    // Transición directa al reproductor con los nuevos metadatos y poster aplicados
                     window.location.reload();
                 }} else {{
                     alert("❌ Error al renombrar: " + data.error);
@@ -1356,7 +1369,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
             if verbose:
                 super().log_message(format, *args)
             else:
-                req_line = args[0] if args else ""
+                req_line = str(args[0]) if args else ""
                 if "POST /api" in req_line or "GET /api" in req_line:
                     super().log_message(format, *args)
 
@@ -1433,7 +1446,6 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
 
             # Streaming HTTP 206 Partial Content
             if parsed.path.startswith("/video"):
-                # Permitir reproducir por index si se proporciona
                 query = urllib.parse.parse_qs(parsed.query)
                 if "index" in query:
                     idx = int(query.get("index", ["0"])[0])
@@ -1558,7 +1570,6 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                         if target_idx is not None and 0 <= target_idx < len(file_list):
                             file_list[target_idx] = new_full_path
                     
-                    # Actualizar metadatos en vivo
                     new_meta = get_file_metadata(new_full_path, api_key)
                     meta = new_meta
                     if is_dir and target_idx is not None and 0 <= target_idx < len(catalog_items):
@@ -1581,8 +1592,9 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
 
             self.send_error(404)
 
-    class SilentTCPServer(socketserver.TCPServer):
+    class ThreadingSilentTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         allow_reuse_address = True
+        daemon_threads = True
         
         def handle_error(self, request, client_address):
             exc_type, exc_val, _ = sys.exc_info()
@@ -1601,7 +1613,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v2.0.2 - STREAMING & GLASSMORPHIC MEDIA HUB")
+    print(f"⚡ FASTSTREAM v2.0.3 - STREAMING & GLASSMORPHIC MEDIA HUB")
     print("="*70)
     if is_dir:
         print(f"📁 Modo:     Catálogo de Carpeta ({len(file_list)} videos)")
@@ -1617,7 +1629,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     print("💡 Presiona Ctrl + C o pulsa '🛑 Apagar' en el navegador para detener.\n")
     
     try:
-        with SilentTCPServer(("0.0.0.0", final_port), FastStreamHandler) as httpd:
+        with ThreadingSilentTCPServer(("0.0.0.0", final_port), FastStreamHandler) as httpd:
             httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n🛑 Servidor FastStream detenido correctamente.")
