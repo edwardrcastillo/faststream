@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-⚡ FastStream v2.0.6 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
+⚡ FastStream v2.2.1 - Zero-Dependency Instant HTTP Range Video Streamer & Glassmorphic Media Hub
 Author: Edward Castillo (FastMovie Team)
 License: MIT
 
@@ -3361,62 +3361,6 @@ def get_ffmpeg_bin():
             return p
     return "ffmpeg"
 
-REMUX_CACHE_DIR = os.path.join(tempfile.gettempdir(), "faststream_remux_cache")
-REMUX_LOCK = threading.Lock()
-
-def get_or_create_audio_remux(video_path, stream_id):
-    if not has_ffmpeg():
-        return video_path
-    os.makedirs(REMUX_CACHE_DIR, exist_ok=True)
-    try:
-        f_stat = os.stat(video_path)
-        key_str = f"{video_path}_{f_stat.st_mtime}_{f_stat.st_size}_{stream_id}"
-    except Exception:
-        key_str = f"{video_path}_{stream_id}"
-    cache_hash = hashlib.md5(key_str.encode('utf-8')).hexdigest()[:12]
-    base_name = os.path.splitext(os.path.basename(video_path))[0]
-    clean_base = re.sub(r'[^\w\-]', '_', base_name)[:30]
-    out_file = os.path.join(REMUX_CACHE_DIR, f"{clean_base}_a{stream_id}_{cache_hash}.mp4")
-    
-    with REMUX_LOCK:
-        if os.path.exists(out_file) and os.path.getsize(out_file) > 1024:
-            return out_file
-            
-        # Probar si el audio ya es AAC para remuxeo instantáneo
-        is_aac = False
-        try:
-            p_cmd = ["ffprobe", "-v", "error", "-select_streams", str(stream_id), "-show_entries", "stream=codec_name", "-of", "csv=p=0", video_path]
-            c_res = subprocess.run(p_cmd, capture_output=True, text=True, timeout=3)
-            if c_res.stdout.strip().lower() in ('aac', 'mp4a'):
-                is_aac = True
-        except Exception:
-            pass
-
-        audio_args = ["-c:a", "copy"] if is_aac else ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
-        tmp_out = out_file + ".tmp"
-        ffmpeg_bin = get_ffmpeg_bin()
-
-        cmd = [
-            ffmpeg_bin, "-y", "-v", "error",
-            "-i", video_path,
-            "-map", "0:v:0",
-            "-map", f"0:{stream_id}",
-            "-c:v", "copy",
-            *audio_args,
-            "-movflags", "+faststart",
-            "-f", "mp4",
-            tmp_out
-        ]
-        try:
-            subprocess.run(cmd, check=True)
-            os.replace(tmp_out, out_file)
-            return out_file
-        except Exception as e:
-            if os.path.exists(tmp_out):
-                try: os.remove(tmp_out)
-                except Exception: pass
-            return video_path
-
 def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     abs_target = os.path.abspath(target)
     if not os.path.exists(abs_target):
@@ -3534,29 +3478,10 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 return
 
             if parsed.path == "/api/prepare_audio":
-                qs = urllib.parse.parse_qs(parsed.query)
-                idx = int(qs.get("index", ["0"])[0])
-                audio_stream = qs.get("audio", [""])[0]
-                video_target = file_list[idx] if (is_dir and 0 <= idx < len(file_list)) else current_file
-                
-                if not audio_stream or audio_stream == "":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"success": True, "ready": True}).encode("utf-8"))
-                    return
-                    
-                try:
-                    remux_path = get_or_create_audio_remux(video_target, audio_stream)
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"success": True, "ready": True, "path": remux_path}).encode("utf-8"))
-                except Exception as e:
-                    self.send_response(500)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "ready": True}).encode("utf-8"))
                 return
 
             # Subtítulos WebVTT On-Demand
@@ -3968,7 +3893,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v2.2.0 - MULTI-AUDIO, SUBTITLES & JELLYFIN HUB")
+    print(f"⚡ FASTSTREAM v2.2.1 - MULTI-AUDIO, SUBTITLES & JELLYFIN HUB")
     print("="*70)
     if is_dir:
         print(f"📁 Modo:     Catálogo de Carpeta ({len(file_list)} videos)")
