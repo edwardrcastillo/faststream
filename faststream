@@ -1861,8 +1861,8 @@ def get_or_create_audio_remux(video_path, stream_id):
         # Verificar si la pista de audio ya es AAC nativa para copia ultrarrápida
         is_aac = False
         try:
-            p_cmd = ["ffprobe", "-v", "error", "-select_streams", f"0:{stream_id}", "-show_entries", "stream=codec_name", "-of", "csv=p=0", video_path]
-            c_res = subprocess.run(p_cmd, capture_output=True, text=True, timeout=3)
+            p_cmd = ["ffprobe", "-v", "error", "-select_streams", str(stream_id), "-show_entries", "stream=codec_name", "-of", "csv=p=0", video_path]
+            c_res = subprocess.run(p_cmd, capture_output=True, text=True, timeout=4)
             if c_res.stdout.strip().lower() in ('aac', 'mp4a'):
                 is_aac = True
         except Exception:
