@@ -153,9 +153,9 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 | **Gestión de Subcarpetas en Web** | ✅ **Selector interactivo + Creación en 1 clic** | ❌ Solo en raíz actual | ⚠️ Básico / Requiere WebDAV |
 | **Auto-Enriquecimiento e Indexación** | ✅ **FFprobe + TMDB inmediato al subir** | ❌ No (Solo lista de texto) | ❌ No (Solo lista de texto) |
 | **Seguridad en Subidas** | ✅ **Anti-Path Traversal + Ext. Whitelist + Auto-sufijo** | ⚠️ Básico | ⚠️ Básico |
-| **Reproductor de Video** | 🎬 **Cinematográfico (Glassmorphism + Tracks)** | 📄 Básico del navegador (`<video>` plano) | 📄 Básico del navegador (`<video>` plano) |
-| **Pistas de Audio al Vuelo** | ✅ **Conmutador Multi-Audio en vivo** | ❌ No | ❌ No |
-| **Selector de Subtítulos** | ✅ **Incrustados + Externos (WebVTT)** | ❌ No | ❌ No |
+| **Reproductor de Video** | 🎬 **Glassmorphic Pro (Timeline Matemático + Auto-Hide)** | 📄 Básico del navegador (`<video>` plano) | 📄 Básico del navegador (`<video>` plano) |
+| **Pistas de Audio al Vuelo** | ⚡ **Instantáneo (<0.1s) con `-ss` en RAM (Zero Disk Writes)** | ❌ No | ❌ No |
+| **Sincronización de Subtítulos** | 💬 **Motor Client-Side WebVTT (Zero Desincronización)** | ❌ No | ❌ No |
 | **Metadatos y Carátulas TMDB/IMDb** | ✅ **Automático + Buscador en vivo** | ❌ Inexistente | ❌ Inexistente |
 | **Selector Variantes de Título** | ✅ **Español, Inglés u Original en 1 clic** | ❌ Inexistente | ❌ Inexistente |
 | **Renombrado a Estándar Jellyfin** | ✅ **1-Click (`Título (Año) [tmdbid-ID].ext`)** | ❌ No disponible | ❌ Solo renombrado manual plano |
