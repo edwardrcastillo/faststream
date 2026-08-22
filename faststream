@@ -2818,35 +2818,69 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             if (!video) return;
             const curTime = video.currentTime;
             const isPaused = video.paused;
+            const audioSelect = document.getElementById('audioTrackSelect');
             const subSelect = document.getElementById('subTrackSelect');
             const chosenSubIdx = subSelect ? parseInt(subSelect.value) : -1;
             
-            const baseUrl = `/video?index={current_idx}`;
-            const newSrc = (streamId !== "" && streamId !== undefined) ? `${{baseUrl}}&audio=${{streamId}}` : baseUrl;
+            let toast = document.getElementById('faststreamToast');
+            if (!toast) {{
+                toast = document.createElement('div');
+                toast.id = 'faststreamToast';
+                toast.style.cssText = 'position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.95); border:1px solid #38bdf8; color:#38bdf8; padding:12px 24px; border-radius:12px; font-size:14px; font-weight:700; z-index:9999; backdrop-filter:blur(12px); box-shadow:0 15px 35px rgba(0,0,0,0.6); display:none; align-items:center; gap:10px;';
+                document.body.appendChild(toast);
+            }}
             
-            const srcElem = document.getElementById('videoSource');
-            if (srcElem) srcElem.src = newSrc;
-            video.src = newSrc;
+            if (streamId !== "") {{
+                toast.innerHTML = '<span style="font-size:18px;">⏳</span> <span>Cambiando pista de audio...</span>';
+                toast.style.display = 'flex';
+                if (audioSelect) audioSelect.disabled = true;
+            }}
             
-            video.addEventListener('loadedmetadata', function() {{
-                // Restaurar subtítulo activo
-                if (chosenSubIdx >= 0 && video.textTracks) {{
-                    for (let i = 0; i < video.textTracks.length; i++) {{
-                        video.textTracks[i].mode = (i === chosenSubIdx) ? 'showing' : 'disabled';
+            try {{
+                if (streamId !== "") {{
+                    const res = await fetch(`/api/prepare_audio?index={current_idx}&audio=${{streamId}}`);
+                    const data = await res.json();
+                    if (!data.success) {{
+                        alert("❌ Error al preparar pista de audio: " + (data.error || "Error"));
+                        if (toast) toast.style.display = 'none';
+                        if (audioSelect) audioSelect.disabled = false;
+                        return;
                     }}
                 }}
                 
-                if (curTime > 0.5) {{
-                    video.addEventListener('seeked', function() {{
+                const baseUrl = `/video?index={current_idx}`;
+                const newSrc = (streamId !== "" && streamId !== undefined) ? `${{baseUrl}}&audio=${{streamId}}` : baseUrl;
+                
+                const srcElem = document.getElementById('videoSource');
+                if (srcElem) srcElem.src = newSrc;
+                video.src = newSrc;
+                
+                video.addEventListener('loadedmetadata', function() {{
+                    if (toast) toast.style.display = 'none';
+                    if (audioSelect) audioSelect.disabled = false;
+                    
+                    // Restaurar subtítulo activo
+                    if (chosenSubIdx >= 0 && video.textTracks) {{
+                        for (let i = 0; i < video.textTracks.length; i++) {{
+                            video.textTracks[i].mode = (i === chosenSubIdx) ? 'showing' : 'disabled';
+                        }}
+                    }}
+                    
+                    if (curTime > 0.5) {{
+                        video.addEventListener('seeked', function() {{
+                            if (!isPaused) video.play().catch(()=>{{}});
+                        }}, {{ once: true }});
+                        video.currentTime = curTime;
+                    }} else {{
                         if (!isPaused) video.play().catch(()=>{{}});
-                    }}, {{ once: true }});
-                    video.currentTime = curTime;
-                }} else {{
-                    if (!isPaused) video.play().catch(()=>{{}});
-                }}
-            }}, {{ once: true }});
-            
-            video.load();
+                    }}
+                }}, {{ once: true }});
+                
+                video.load();
+            }} catch(e) {{
+                if (toast) toast.style.display = 'none';
+                if (audioSelect) audioSelect.disabled = false;
+            }}
         }}
 
         function switchSubtitleTrack(val) {{
@@ -3015,6 +3049,62 @@ def get_ffmpeg_bin():
         if os.path.exists(p):
             return p
     return "ffmpeg"
+
+REMUX_CACHE_DIR = os.path.join(tempfile.gettempdir(), "faststream_remux_cache")
+REMUX_LOCK = threading.Lock()
+
+def get_or_create_audio_remux(video_path, stream_id):
+    if not has_ffmpeg():
+        return video_path
+    os.makedirs(REMUX_CACHE_DIR, exist_ok=True)
+    try:
+        f_stat = os.stat(video_path)
+        key_str = f"{video_path}_{f_stat.st_mtime}_{f_stat.st_size}_{stream_id}"
+    except Exception:
+        key_str = f"{video_path}_{stream_id}"
+    cache_hash = hashlib.md5(key_str.encode('utf-8')).hexdigest()[:12]
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    clean_base = re.sub(r'[^\w\-]', '_', base_name)[:30]
+    out_file = os.path.join(REMUX_CACHE_DIR, f"{clean_base}_a{stream_id}_{cache_hash}.mp4")
+    
+    with REMUX_LOCK:
+        if os.path.exists(out_file) and os.path.getsize(out_file) > 1024:
+            return out_file
+            
+        # Probar si el audio ya es AAC para remuxeo instantáneo
+        is_aac = False
+        try:
+            p_cmd = ["ffprobe", "-v", "error", "-select_streams", str(stream_id), "-show_entries", "stream=codec_name", "-of", "csv=p=0", video_path]
+            c_res = subprocess.run(p_cmd, capture_output=True, text=True, timeout=3)
+            if c_res.stdout.strip().lower() in ('aac', 'mp4a'):
+                is_aac = True
+        except Exception:
+            pass
+
+        audio_args = ["-c:a", "copy"] if is_aac else ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+        tmp_out = out_file + ".tmp"
+        ffmpeg_bin = get_ffmpeg_bin()
+
+        cmd = [
+            ffmpeg_bin, "-y", "-v", "error",
+            "-i", video_path,
+            "-map", "0:v:0",
+            "-map", f"0:{stream_id}",
+            "-c:v", "copy",
+            *audio_args,
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            tmp_out
+        ]
+        try:
+            subprocess.run(cmd, check=True)
+            os.replace(tmp_out, out_file)
+            return out_file
+        except Exception as e:
+            if os.path.exists(tmp_out):
+                try: os.remove(tmp_out)
+                except Exception: pass
+            return video_path
 
 def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     abs_target = os.path.abspath(target)
@@ -3237,43 +3327,13 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 else:
                     video_target = current_file
 
-                # Selección dinámica de pista de audio:
-                # 1. Si se solicita una pista alternativa y FFmpeg está presente -> Streaming instantáneo por tubería RAM al vuelo (Zero disk writes)
-                # 2. Si no hay FFmpeg o es la pista por defecto -> Streaming nativo Python RFC 7233 byte-range (Zero dependencies)
+                # Selección dinámica de pista de audio con remux rápido y soporte completo de Byte-Range RFC 7233
                 audio_req = query.get("audio", [None])[0]
                 if audio_req is not None and audio_req != "" and has_ffmpeg():
-                    ffmpeg_bin = get_ffmpeg_bin()
-                    cmd = [
-                        ffmpeg_bin, "-v", "quiet",
-                        "-i", video_target,
-                        "-map", "0:v:0",
-                        "-map", f"0:{audio_req}",
-                        "-c:v", "copy",
-                        "-c:a", "aac", "-b:a", "192k", "-ac", "2",
-                        "-f", "mp4",
-                        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-                        "-"
-                    ]
                     try:
-                        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-                        self.send_response(200)
-                        self.send_header("Content-Type", "video/mp4")
-                        self.send_header("Cache-Control", "no-cache")
-                        self.send_header("Accept-Ranges", "none")
-                        self.end_headers()
-                        while True:
-                            chunk = proc.stdout.read(64 * 1024)
-                            if not chunk: break
-                            self.wfile.write(chunk)
-                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        video_target = get_or_create_audio_remux(video_target, audio_req)
+                    except Exception as e:
                         pass
-                    finally:
-                        try:
-                            proc.kill()
-                            proc.wait()
-                        except Exception:
-                            pass
-                    return
 
                 try:
                     file_size = os.path.getsize(video_target)
