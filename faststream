@@ -1668,7 +1668,6 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                 video.addEventListener('loadedmetadata', function() {{
                     if (toast) toast.style.display = 'none';
                     if (audioSelect) audioSelect.disabled = false;
-                    video.currentTime = curTime;
                     
                     // Restaurar subtítulo activo
                     if (chosenSubIdx >= 0 && video.textTracks) {{
@@ -1676,7 +1675,15 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                             video.textTracks[i].mode = (i === chosenSubIdx) ? 'showing' : 'disabled';
                         }}
                     }}
-                    if (!isPaused) video.play().catch(()=>{{}});
+                    
+                    if (curTime > 0.5) {{
+                        video.addEventListener('seeked', function() {{
+                            if (!isPaused) video.play().catch(()=>{{}});
+                        }}, {{ once: true }});
+                        video.currentTime = curTime;
+                    }} else {{
+                        if (!isPaused) video.play().catch(()=>{{}});
+                    }}
                 }}, {{ once: true }});
                 
                 video.load();
