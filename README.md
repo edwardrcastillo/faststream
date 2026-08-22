@@ -55,39 +55,69 @@ Cuando ya tengas `faststream` instalado y desees actualizarlo manualmente:
 
 ---
 
-## 💻 Guía de Uso
+## 🖱️ Integración en Menú Contextual (Clic Derecho)
 
-### 1. Instalar integración en el Menú Contextual (Clic Derecho en Finder / Nautilus / Explorer):
+FastStream permite iniciar la transmisión de cualquier video o carpeta completa directamente desde el explorador de archivos con un solo clic.
+
 ```bash
 faststream --install-menu
 ```
 *(Para desinstalarlo en cualquier momento: `faststream --remove-menu`)*
 
-### 2. Transmitir y auditar una película individual:
+### 🎮 Experiencia de Usuario por Sistema Operativo:
+
+#### 1. 🍎 macOS (Finder)
+* **Activación:** Ejecuta `faststream --install-menu` (se crea el servicio en `~/Library/Services/`).
+* **Uso diario:**
+  1. En el **Finder**, haz clic derecho sobre cualquier película, capítulo o carpeta de series.
+  2. Selecciona **Acciones Rápidas (Quick Actions)** o **Servicios** -> **`⚡ Transmitir con FastStream`**.
+  3. Se abrirá automáticamente una ventana de **Terminal** con la ficha técnica, el **Código QR** y la URL web activa.
+
+#### 2. 🐧 Linux (Pop!_OS, Ubuntu, Fedora, Arch, Debian)
+* **Entornos compatibles:** **GNOME / Nautilus**, **KDE Dolphin**, **Cinnamon / Nemo**, **XFCE / Thunar**.
+* **Activación:** Ejecuta `faststream --install-menu` (instala scripts en `~/.local/share/nautilus/scripts/` y menús `.desktop` para Dolphin).
+* **Uso diario:**
+  1. En tu explorador de archivos, haz clic derecho sobre el video o directorio.
+  2. Selecciona **Scripts** o el menú contextual directo -> **`⚡ Transmitir con FastStream`**.
+  3. Abre automáticamente tu emulador de terminal favorito (`gnome-terminal`, `konsole`, `alacritty`, `kitty`, etc.) listo para escanear y reproducir.
+
+#### 3. 🪟 Windows (Explorador de Archivos)
+* **Compatibilidad:** Windows 10, Windows 11 y Windows Server.
+* **Activación:** Ejecuta `faststream --install-menu` (registra claves de usuario en `HKCU\Software\Classes` sin requerir permisos de Administrador).
+* **Uso diario:**
+  1. En el **Explorador de Archivos**, haz clic derecho sobre cualquier archivo `.mp4`, `.mkv` o carpeta.
+  2. Haz clic en **`⚡ Transmitir con FastStream`**.
+  3. Aparece la consola con el código QR en alta fidelidad y la transmisión lista para Smart TVs y dispositivos móviles.
+
+---
+
+## 💻 Guía de Uso CLI
+
+### 1. Transmitir y auditar una película individual:
 ```bash
 faststream "/media/Films/Patria (2024).mp4"
 ```
 
-### 3. Transmitir una temporada o carpeta completa de series:
+### 2. Transmitir una temporada o carpeta completa de series:
 ```bash
 faststream "/media/Series/One Piece/Season 18/"
 ```
 
-### 4. Especificar puerto manualmente:
+### 3. Especificar puerto manualmente:
 ```bash
 faststream video.mp4 -p 9000
 ```
 
-### 5. Actualizar FastStream:
+### 4. Actualizar FastStream:
 ```bash
 faststream --update
 ```
 
-### 6. Detener el servidor:
+### 5. Detener el servidor:
 * **Desde la terminal:** Presionando `Ctrl + C`.
 * **Desde el navegador:** Haciendo clic en el botón rojo **"🛑 Apagar"** en la interfaz web.
 
-### 7. Configurar tu propia API Key de TMDB (Opcional):
+### 6. Configurar tu propia API Key de TMDB (Opcional):
 Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar de inmediato. Si prefieres usar tu propia clave oficial de TheMovieDB:
 
 * **Guardarla de forma permanente (`~/.config/faststream/config.json`):**
