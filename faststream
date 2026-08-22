@@ -1623,11 +1623,12 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             document.getElementById('searchModal').style.display = 'none';
         }}
 
-        function switchAudioTrack(streamId) {{
+        async function switchAudioTrack(streamId) {{
             const video = document.getElementById('playerVideo');
             if (!video) return;
             const curTime = video.currentTime;
             const isPaused = video.paused;
+            const audioSelect = document.getElementById('audioTrackSelect');
             const subSelect = document.getElementById('subTrackSelect');
             const chosenSubIdx = subSelect ? parseInt(subSelect.value) : -1;
             
@@ -1635,36 +1636,54 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             if (!toast) {{
                 toast = document.createElement('div');
                 toast.id = 'faststreamToast';
-                toast.style.cssText = 'position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.92); border:1px solid #38bdf8; color:#38bdf8; padding:10px 20px; border-radius:10px; font-size:14px; font-weight:600; z-index:9999; backdrop-filter:blur(8px); box-shadow:0 10px 25px rgba(0,0,0,0.5); display:none;';
+                toast.style.cssText = 'position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.95); border:1px solid #38bdf8; color:#38bdf8; padding:12px 24px; border-radius:12px; font-size:14px; font-weight:700; z-index:9999; backdrop-filter:blur(12px); box-shadow:0 15px 35px rgba(0,0,0,0.6); display:none; align-items:center; gap:10px;';
                 document.body.appendChild(toast);
             }}
             
-            const baseUrl = `/video?index={current_idx}`;
-            const newSrc = (streamId !== "" && streamId !== undefined) ? `${{baseUrl}}&audio=${{streamId}}` : baseUrl;
-            
             if (streamId !== "") {{
-                toast.innerHTML = "⏳ Preparando pista de audio y sincronizando...";
-                toast.style.display = "block";
+                toast.innerHTML = '<span style="font-size:18px;">⏳</span> <span>Preparando pista de audio sin cortes...</span>';
+                toast.style.display = 'flex';
+                if (audioSelect) audioSelect.disabled = true;
             }}
             
-            const srcElem = document.getElementById('videoSource');
-            if (srcElem) srcElem.src = newSrc;
-            video.src = newSrc;
-            
-            video.addEventListener('loadedmetadata', function() {{
-                if (toast) toast.style.display = "none";
-                video.currentTime = curTime;
-                
-                // Restaurar subtítulo activo
-                if (chosenSubIdx >= 0 && video.textTracks) {{
-                    for (let i = 0; i < video.textTracks.length; i++) {{
-                        video.textTracks[i].mode = (i === chosenSubIdx) ? 'showing' : 'disabled';
+            try {{
+                if (streamId !== "") {{
+                    const res = await fetch(`/api/prepare_audio?index={current_idx}&audio=${{streamId}}`);
+                    const data = await res.json();
+                    if (!data.success) {{
+                        alert("❌ No se pudo preparar la pista de audio: " + (data.error || "Error"));
+                        if (toast) toast.style.display = 'none';
+                        if (audioSelect) audioSelect.disabled = false;
+                        return;
                     }}
                 }}
-                if (!isPaused) video.play().catch(()=>{{}});
-            }}, {{ once: true }});
-            
-            video.load();
+                
+                const baseUrl = `/video?index={current_idx}`;
+                const newSrc = (streamId !== "" && streamId !== undefined) ? `${{baseUrl}}&audio=${{streamId}}` : baseUrl;
+                
+                const srcElem = document.getElementById('videoSource');
+                if (srcElem) srcElem.src = newSrc;
+                video.src = newSrc;
+                
+                video.addEventListener('loadedmetadata', function() {{
+                    if (toast) toast.style.display = 'none';
+                    if (audioSelect) audioSelect.disabled = false;
+                    video.currentTime = curTime;
+                    
+                    // Restaurar subtítulo activo
+                    if (chosenSubIdx >= 0 && video.textTracks) {{
+                        for (let i = 0; i < video.textTracks.length; i++) {{
+                            video.textTracks[i].mode = (i === chosenSubIdx) ? 'showing' : 'disabled';
+                        }}
+                    }}
+                    if (!isPaused) video.play().catch(()=>{{}});
+                }}, {{ once: true }});
+                
+                video.load();
+            }} catch(e) {{
+                if (toast) toast.style.display = 'none';
+                if (audioSelect) audioSelect.disabled = false;
+            }}
         }}
 
         function switchSubtitleTrack(val) {{
@@ -1970,6 +1989,32 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                     self.wfile.write(json.dumps(results, ensure_ascii=False).encode("utf-8"))
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
+                return
+
+            if parsed.path == "/api/prepare_audio":
+                qs = urllib.parse.parse_qs(parsed.query)
+                idx = int(qs.get("index", ["0"])[0])
+                audio_stream = qs.get("audio", [""])[0]
+                video_target = file_list[idx] if (is_dir and 0 <= idx < len(file_list)) else current_file
+                
+                if not audio_stream or audio_stream == "":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": True, "ready": True}).encode("utf-8"))
+                    return
+                    
+                try:
+                    remux_path = get_or_create_audio_remux(video_target, audio_stream)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": True, "ready": True, "path": remux_path}).encode("utf-8"))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
                 return
 
             # Subtítulos WebVTT On-Demand
