@@ -576,29 +576,125 @@ def get_file_metadata(file_path, api_key=None):
     codec_str = "H.264"
     audio_str = "Estéreo"
     
+    audio_tracks = []
+    subtitle_tracks = []
+    
     try:
-        cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration,size:stream=codec_name,width,height,channels', '-of', 'json', file_path]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+        cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration,size:stream=index,codec_type,codec_name,width,height,channels,disposition,tags', '-of', 'json', file_path]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
         if res.returncode == 0:
             data = json.loads(res.stdout)
             dur = float(data.get('format', {}).get('duration', 0))
             if dur > 0:
                 mins = int(dur // 60)
                 duration_str = f"{mins // 60}h {mins % 60}m" if mins >= 60 else f"{mins} min"
+                
             for st in data.get('streams', []):
-                if st.get('width'):
-                    w = st.get('width')
-                    h = st.get('height')
-                    res_str = f"{w}x{h}" if w else "HD"
-                    codec_str = st.get('codec_name', 'H.264').upper()
-                if st.get('channels'):
-                    ch = st.get('channels')
-                    audio_str = "5.1 Surround" if ch >= 6 else ("Estéreo" if ch == 2 else "Mono")
+                stype = st.get('codec_type')
+                sidx = st.get('index')
+                stags = st.get('tags') or {}
+                disp = st.get('disposition') or {}
+                
+                lang = (stags.get('language') or 'und').lower()
+                title_tag = stags.get('title') or stags.get('name') or ''
+                
+                if stype == 'video':
+                    if st.get('width'):
+                        w = st.get('width')
+                        h = st.get('height')
+                        res_str = f"{w}x{h}" if w else "HD"
+                        codec_str = st.get('codec_name', 'H.264').upper()
+                        
+                elif stype == 'audio':
+                    ch = st.get('channels', 2)
+                    ch_str = "5.1 Surround" if ch >= 6 else ("Estéreo" if ch == 2 else "Mono")
+                    if not audio_str or audio_str == "Estéreo":
+                        audio_str = ch_str
+                        
+                    if title_tag:
+                        human_title = title_tag
+                    elif lang in ('spa', 'es', 'es-mx', 'es-es', 'es-419'):
+                        human_title = "Español (Latino)" if "lat" in title_tag.lower() else "Español"
+                    elif lang in ('jpn', 'ja'):
+                        human_title = "Japonés (Original)"
+                    elif lang in ('eng', 'en'):
+                        human_title = "Inglés"
+                    elif lang in ('fra', 'fr'):
+                        human_title = "Francés"
+                    elif lang in ('deu', 'ger', 'de'):
+                        human_title = "Alemán"
+                    elif lang in ('ita', 'it'):
+                        human_title = "Italiano"
+                    elif lang in ('por', 'pt'):
+                        human_title = "Portugués"
+                    else:
+                        human_title = f"Pista Audio {len(audio_tracks)+1} ({lang.upper()})"
+                        
+                    human_title += f" • {ch_str}"
+                    audio_tracks.append({
+                        "index": len(audio_tracks),
+                        "stream_id": sidx,
+                        "language": lang,
+                        "title": human_title,
+                        "channels": ch,
+                        "codec": st.get('codec_name', '').upper(),
+                        "is_default": disp.get('default', 0) == 1
+                    })
+                    
+                elif stype == 'subtitle':
+                    is_forced = disp.get('forced', 0) == 1 or 'forced' in title_tag.lower() or 'forzado' in title_tag.lower()
+                    if title_tag:
+                        human_sub = title_tag
+                    elif lang in ('spa', 'es', 'es-mx', 'es-es', 'es-419'):
+                        human_sub = "Español (Forzado)" if is_forced else "Español (Completo)"
+                    elif lang in ('eng', 'en'):
+                        human_sub = "Inglés (Forzado)" if is_forced else "Inglés"
+                    elif lang in ('jpn', 'ja'):
+                        human_sub = "Japonés"
+                    else:
+                        human_sub = f"Subtítulo {len(subtitle_tracks)+1} ({lang.upper()})"
+                        
+                    if is_forced and "forzado" not in human_sub.lower() and "forced" not in human_sub.lower():
+                        human_sub += " (Forzado)"
+                        
+                    subtitle_tracks.append({
+                        "index": len(subtitle_tracks),
+                        "stream_id": sidx,
+                        "language": lang if lang != 'und' else 'es',
+                        "title": human_sub,
+                        "forced": is_forced,
+                        "codec": st.get('codec_name', ''),
+                        "is_default": disp.get('default', 0) == 1
+                    })
     except Exception:
         atom_dur = parse_mp4_atoms_duration(file_path)
         if atom_dur:
             mins = int(atom_dur // 60)
             duration_str = f"{mins // 60}h {mins % 60}m" if mins >= 60 else f"{mins} min"
+
+    # External Subtitle Search
+    try:
+        parent_d = os.path.dirname(file_path)
+        base_no_ext = os.path.splitext(filename)[0]
+        if os.path.exists(parent_d):
+            for ext_f in os.listdir(parent_d):
+                if ext_f.lower().endswith(('.srt', '.vtt')) and ext_f.startswith(base_no_ext):
+                    ext_path = os.path.join(parent_d, ext_f)
+                    ext_lang = 'es'
+                    if '.en.' in ext_f.lower() or '.eng.' in ext_f.lower(): ext_lang = 'en'
+                    subtitle_tracks.append({
+                        "index": len(subtitle_tracks),
+                        "stream_id": f"ext:{ext_f}",
+                        "language": ext_lang,
+                        "title": f"Externo: {ext_f}",
+                        "forced": 'forced' in ext_f.lower() or 'forzado' in ext_f.lower(),
+                        "codec": "srt",
+                        "is_external": True,
+                        "ext_path": ext_path,
+                        "is_default": False
+                    })
+    except Exception:
+        pass
 
     try:
         size_bytes = os.path.getsize(file_path)
@@ -620,7 +716,9 @@ def get_file_metadata(file_path, api_key=None):
         "resolution": res_str,
         "codec": codec_str,
         "audio": audio_str,
-        "size_mb": size_mb
+        "size_mb": size_mb,
+        "audio_tracks": audio_tracks,
+        "subtitle_tracks": subtitle_tracks
     }
 
     # TMDB Search
@@ -995,6 +1093,32 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
     poster_img = f'<img src="{meta["poster_url"]}" alt="Poster" class="poster-img">' if meta.get("poster_url") else '<div class="no-poster">🎬</div>'
     back_btn = '<button class="nav-btn" onclick="window.location.href=\'/\'">⬅️ Volver al Catálogo</button>' if is_dir else ''
 
+    # Subtitle Tracks & Options
+    subs = meta.get("subtitle_tracks", [])
+    tracks_html_list = []
+    sub_options = []
+    for s_idx, s in enumerate(subs):
+        s_label = html.escape(s.get("title", f"Sub {s_idx+1}"))
+        s_lang = html.escape(s.get("language", "es"))
+        s_src = f"/subtitles?index={current_idx}&stream_id={s.get('stream_id')}"
+        is_def = 'default' if (s.get("is_default") or s.get("forced")) else ''
+        tracks_html_list.append(f'<track id="sub_track_{s_idx}" label="{s_label}" kind="subtitles" srclang="{s_lang}" src="{s_src}" {is_def}>')
+        sub_options.append(f'<option value="{s_idx}">{s_label}</option>')
+        
+    tracks_html = "\n                ".join(tracks_html_list)
+    sub_options_html = "\n                            ".join(sub_options)
+    
+    # Audio Tracks & Options
+    audios = meta.get("audio_tracks", [])
+    audio_options = []
+    for a in audios:
+        a_label = html.escape(a.get("title", f"Audio {a.get('index')+1}"))
+        a_val = a.get("stream_id")
+        is_def = 'selected' if a.get("is_default") else ''
+        audio_options.append(f'<option value="{a_val}" {is_def}>🎵 {a_label}</option>')
+        
+    audio_options_html = "\n                            ".join(audio_options)
+
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1059,6 +1183,41 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             width: 100%;
             height: 100%;
             outline: none;
+        }}
+        .tracks-bar {{
+            display: flex;
+            gap: 16px;
+            background: rgba(15, 23, 42, 0.95);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 24px;
+            align-items: center;
+            flex-wrap: wrap;
+        }}
+        .track-picker-group {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .track-picker-group label {{
+            font-size: 13px;
+            font-weight: 700;
+            color: #94a3b8;
+        }}
+        .track-select {{
+            background: #1e293b;
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            padding: 7px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            outline: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+        .track-select:hover {{
+            border-color: #38bdf8;
+            background: #334155;
         }}
         .info-section {{
             display: flex;
@@ -1358,10 +1517,26 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
     </div>
     <div class="main-card">
         <div class="player-wrapper">
-            <video controls autoplay playsinline preload="metadata">
-                <source src="/video?index={current_idx}" type="video/mp4">
+            <video id="playerVideo" controls autoplay playsinline preload="metadata">
+                <source id="videoSource" src="/video?index={current_idx}" type="video/mp4">
+                {tracks_html}
                 Navegador no compatible con video HTML5.
             </video>
+        </div>
+        <div class="tracks-bar">
+            <div class="track-picker-group">
+                <label for="audioTrackSelect">🎵 Audio:</label>
+                <select id="audioTrackSelect" class="track-select" onchange="switchAudioTrack(this.value)">
+                    {audio_options_html if audio_options else '<option value="">Estéreo Predeterminado</option>'}
+                </select>
+            </div>
+            <div class="track-picker-group">
+                <label for="subTrackSelect">💬 Subtítulos:</label>
+                <select id="subTrackSelect" class="track-select" onchange="switchSubtitleTrack(this.value)">
+                    <option value="-1">🚫 Desactivados</option>
+                    {sub_options_html}
+                </select>
+            </div>
         </div>
         <div class="info-section">
             <div class="poster-box">
@@ -1430,6 +1605,52 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
         function closeSearchModal() {{
             document.getElementById('searchModal').style.display = 'none';
         }}
+
+        function switchAudioTrack(streamId) {{
+            const video = document.getElementById('playerVideo');
+            if (!video) return;
+            const curTime = video.currentTime;
+            const isPaused = video.paused;
+            const baseUrl = `/video?index={current_idx}`;
+            const newSrc = streamId !== "" ? `${{baseUrl}}&audio=${{streamId}}` : baseUrl;
+            
+            const srcElem = document.getElementById('videoSource');
+            if (srcElem) srcElem.src = newSrc;
+            video.src = newSrc;
+            
+            video.addEventListener('loadedmetadata', function() {{
+                video.currentTime = curTime;
+                if (!isPaused) video.play().catch(()=>{{}});
+            }}, {{ once: true }});
+            video.load();
+        }}
+
+        function switchSubtitleTrack(val) {{
+            const video = document.getElementById('playerVideo');
+            if (!video || !video.textTracks) return;
+            const trackIdx = parseInt(val);
+            for (let i = 0; i < video.textTracks.length; i++) {{
+                if (i === trackIdx) {{
+                    video.textTracks[i].mode = 'showing';
+                }} else {{
+                    video.textTracks[i].mode = 'disabled';
+                }}
+            }}
+        }}
+
+        window.addEventListener('DOMContentLoaded', () => {{
+            const video = document.getElementById('playerVideo');
+            const subSelect = document.getElementById('subTrackSelect');
+            if (video && video.textTracks && subSelect) {{
+                for (let i = 0; i < video.textTracks.length; i++) {{
+                    if (video.textTracks[i].mode === 'showing' || video.textTracks[i].default) {{
+                        subSelect.value = i;
+                        video.textTracks[i].mode = 'showing';
+                        break;
+                    }}
+                }}
+            }}
+        }});
 
         function selectTitleVariant(itemId, chosenTitle, tmdbId, year) {{
             selectedTitles[itemId] = chosenTitle;
@@ -1657,6 +1878,40 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                     pass
                 return
 
+            # Subtítulos WebVTT On-Demand
+            if parsed.path.startswith("/subtitles"):
+                qs = urllib.parse.parse_qs(parsed.query)
+                idx = int(qs.get("index", ["0"])[0])
+                stream_id = qs.get("stream_id", [""])[0]
+                
+                video_target = file_list[idx] if (is_dir and 0 <= idx < len(file_list)) else current_file
+                
+                self.send_response(200)
+                self.send_header("Content-Type", "text/vtt; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                
+                if stream_id.startswith("ext:"):
+                    ext_name = stream_id[4:]
+                    ext_path = os.path.join(os.path.dirname(video_target), ext_name)
+                    if os.path.exists(ext_path):
+                        try:
+                            cmd = ["ffmpeg", "-v", "error", "-i", ext_path, "-f", "webvtt", "-"]
+                            res_sub = subprocess.run(cmd, capture_output=True, timeout=5)
+                            self.wfile.write(res_sub.stdout if res_sub.stdout else b"WEBVTT\n\n")
+                        except Exception:
+                            self.wfile.write(b"WEBVTT\n\n")
+                    else:
+                        self.wfile.write(b"WEBVTT\n\n")
+                else:
+                    try:
+                        cmd = ["ffmpeg", "-v", "error", "-i", video_target, "-map", f"0:{stream_id}", "-f", "webvtt", "-"]
+                        res_sub = subprocess.run(cmd, capture_output=True, timeout=5)
+                        self.wfile.write(res_sub.stdout if res_sub.stdout else b"WEBVTT\n\n")
+                    except Exception:
+                        self.wfile.write(b"WEBVTT\n\n")
+                return
+
             # Vista Principal
             if parsed.path == "/" or parsed.path == "/index.html":
                 self.send_response(200)
@@ -1690,7 +1945,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                     pass
                 return
 
-            # Streaming HTTP 206 Partial Content
+            # Streaming HTTP 206 Partial Content & On-The-Fly Audio Remux
             if parsed.path.startswith("/video"):
                 query = urllib.parse.parse_qs(parsed.query)
                 if "index" in query:
@@ -1701,6 +1956,38 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                         video_target = current_file
                 else:
                     video_target = current_file
+
+                # Selección dinámica de pista de audio
+                audio_req = query.get("audio", [None])[0]
+                if audio_req is not None and audio_req != "":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Accept-Ranges", "none")
+                    self.end_headers()
+                    try:
+                        cmd = [
+                            "ffmpeg", "-v", "error",
+                            "-i", video_target,
+                            "-map", "0:v:0",
+                            "-map", f"0:{audio_req}",
+                            "-c:v", "copy",
+                            "-c:a", "aac",
+                            "-b:a", "192k",
+                            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+                            "-f", "mp4", "pipe:1"
+                        ]
+                        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        while True:
+                            chunk = proc.stdout.read(64 * 1024)
+                            if not chunk: break
+                            self.wfile.write(chunk)
+                        proc.stdout.close()
+                        proc.wait()
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        pass
+                    except Exception:
+                        pass
+                    return
 
                 try:
                     file_size = os.path.getsize(video_target)
@@ -1859,7 +2146,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v2.0.6 - STREAMING & GLASSMORPHIC MEDIA HUB")
+    print(f"⚡ FASTSTREAM v2.1.0 - MULTI-AUDIO, SUBTITLES & JELLYFIN HUB")
     print("="*70)
     if is_dir:
         print(f"📁 Modo:     Catálogo de Carpeta ({len(file_list)} videos)")
@@ -1882,14 +2169,36 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
         sys.exit(0)
 
 def main():
-    parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante en tu red local.")
+    parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante con selector de audio y subtítulos.")
     parser.add_argument("target", nargs="?", help="Ruta al archivo de video o carpeta a transmitir.")
     parser.add_argument("-p", "--port", type=int, default=None, help="Puerto HTTP específico (por defecto: 8090 o el siguiente puerto libre).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Mostrar logs detallados de todas las peticiones HTTP.")
     parser.add_argument("--tmdb-key", help="Clave de API de TheMovieDB a usar.")
     parser.add_argument("--set-tmdb-key", help="Guardar tu clave de API de TMDB en ~/.config/faststream/config.json permanentemente.")
+    parser.add_argument("--update", action="store_true", help="Actualizar FastStream a la versión más reciente del repositorio.")
     args = parser.parse_args()
     
+    if args.update:
+        candidate_paths = [
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "update_faststream.sh"),
+            os.path.join(os.getcwd(), "scripts", "update_faststream.sh"),
+            os.path.expanduser("~/Documents/FastMovie_Travel_Local/scripts/update_faststream.sh"),
+            "/home/edward/proyectos/FastMovie_Travel_Local/scripts/update_faststream.sh"
+        ]
+        found_script = None
+        for p in candidate_paths:
+            if os.path.exists(p):
+                found_script = p
+                break
+                
+        if found_script:
+            subprocess.run(["bash", found_script])
+        else:
+            print("❌ No se encontró el script de actualización scripts/update_faststream.sh")
+            print("💡 Ejecuta el script directamente desde la raíz del repositorio con:")
+            print("   bash scripts/update_faststream.sh")
+        sys.exit(0)
+
     if args.set_tmdb_key:
         save_config({"tmdb_api_key": args.set_tmdb_key.strip()})
         print(f"✅ Clave TMDB guardada permanentemente en {CONFIG_FILE}!")
