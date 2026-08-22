@@ -2257,11 +2257,144 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             width: 100%;
             background: #000;
             aspect-ratio: 16 / 9;
+            overflow: hidden;
+            user-select: none;
         }}
         video {{
             width: 100%;
             height: 100%;
+            object-fit: contain;
+            display: block;
+        }}
+        .subtitles-overlay {{
+            position: absolute;
+            bottom: 64px;
+            left: 6%;
+            right: 6%;
+            text-align: center;
+            color: #ffffff;
+            font-size: clamp(16px, 2.6vw, 28px);
+            font-weight: 700;
+            text-shadow: 0 2px 4px #000, 0 0 8px rgba(0,0,0,0.9), 0 0 2px #000;
+            pointer-events: none;
+            z-index: 15;
+            display: none;
+            line-height: 1.35;
+        }}
+        .player-overlay {{
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 25%, transparent 50%, rgba(0,0,0,0.4) 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+            z-index: 20;
+            cursor: default;
+        }}
+        .player-overlay.hidden {{
+            opacity: 0;
+            pointer-events: none;
+        }}
+        .center-play-btn {{
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 68px; height: 68px;
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(56, 189, 248, 0.6);
+            color: #38bdf8;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        }}
+        .center-play-btn:hover {{
+            transform: translate(-50%, -50%) scale(1.1);
+            background: #38bdf8;
+            color: #0f172a;
+        }}
+        .bottom-controls {{
+            padding: 12px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: auto;
+        }}
+        .progress-bar-container {{
+            width: 100%;
+            display: flex;
+            align-items: center;
+        }}
+        #playerSeek {{
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.25);
             outline: none;
+            cursor: pointer;
+            transition: height 0.15s;
+        }}
+        #playerSeek:hover {{
+            height: 9px;
+        }}
+        #playerSeek::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            appearance: none;
+            width: 15px; height: 15px;
+            border-radius: 50%;
+            background: #38bdf8;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.8);
+        }}
+        #playerSeek::-moz-range-thumb {{
+            width: 15px; height: 15px;
+            border-radius: 50%;
+            background: #38bdf8;
+            cursor: pointer;
+            border: none;
+        }}
+        .controls-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }}
+        .controls-left, .controls-right {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        .ctrl-btn {{
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 8px;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        .ctrl-btn:hover {{
+            background: rgba(255,255,255,0.15);
+            color: #38bdf8;
+        }}
+        .time-display {{
+            font-size: 13px;
+            color: #cbd5e1;
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
         }}
         .tracks-bar {{
             display: flex;
@@ -2724,12 +2857,33 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
         <div></div>
     </div>
     <div class="main-card">
-        <div class="player-wrapper">
-            <video id="playerVideo" controls autoplay playsinline preload="metadata">
+        <div class="player-wrapper" id="playerContainer" onmousemove="showControls()" onclick="togglePlayOnTap(event)">
+            <video id="playerVideo" playsinline preload="metadata">
                 <source id="videoSource" src="/video?index={current_idx}" type="video/mp4">
-                {tracks_html}
                 Navegador no compatible con video HTML5.
             </video>
+            <div id="subtitlesOverlay" class="subtitles-overlay"></div>
+            <div id="playerOverlay" class="player-overlay">
+                <div class="center-play-btn" id="centerPlayBtn" onclick="togglePlay(event)">▶</div>
+                <div class="bottom-controls">
+                    <div class="progress-bar-container">
+                        <input type="range" id="playerSeek" min="0" max="100" step="0.1" value="0"
+                               oninput="onSeekInput(this.value)" onchange="onSeekChange(this.value)"
+                               onclick="event.stopPropagation()">
+                    </div>
+                    <div class="controls-row">
+                        <div class="controls-left">
+                            <button class="ctrl-btn" id="btnPlay" onclick="togglePlay(event)" title="Reproducir/Pausar (Espacio)">▶</button>
+                            <button class="ctrl-btn" onclick="skipSeconds(-10, event)" title="Retroceder 10s (←)">⏪ 10s</button>
+                            <button class="ctrl-btn" onclick="skipSeconds(10, event)" title="Adelantar 10s (→)">⏩ 10s</button>
+                            <span class="time-display" id="timeDisplay">00:00 / 00:00</span>
+                        </div>
+                        <div class="controls-right">
+                            <button class="ctrl-btn" onclick="toggleFullscreen(event)" title="Pantalla Completa (F)">⛶</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="tracks-bar">
             <div class="track-picker-group">
@@ -2814,71 +2968,253 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             document.getElementById('searchModal').style.display = 'none';
         }}
 
-        function switchAudioTrack(streamId) {{
-            const video = document.getElementById('playerVideo');
-            if (!video) return;
-            const curTime = video.currentTime;
-            const isPaused = video.paused;
-            const subSelect = document.getElementById('subTrackSelect');
-            const chosenSubIdx = subSelect ? parseInt(subSelect.value) : -1;
-            
-            const baseUrl = `/video?index={current_idx}`;
-            let newSrc = baseUrl;
-            if (streamId !== "" && streamId !== undefined) {{
-                newSrc += `&audio=${{streamId}}`;
-                if (curTime > 0.5) {{
-                    newSrc += `&ss=${{curTime.toFixed(1)}}`;
+        let totalDurationSec = {meta.get('duration_sec', 0)};
+        let startSecOffset = 0;
+        let activeAudioIndex = '';
+        let activeSubStreamId = '-1';
+        let parsedSubCues = [];
+        let isUserSeeking = false;
+        let controlsHideTimeout = null;
+
+        function formatSec(sec) {{
+            if (!sec || isNaN(sec) || sec < 0) return "00:00";
+            sec = Math.floor(sec);
+            const hrs = Math.floor(sec / 3600);
+            const mins = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            if (hrs > 0) {{
+                return `${{hrs}}:${{mins < 10 ? '0' : ''}}${{mins}}:${{s < 10 ? '0' : ''}}${{s}}`;
+            }}
+            return `${{mins < 10 ? '0' : ''}}${{mins}}:${{s < 10 ? '0' : ''}}${{s}}`;
+        }}
+
+        function parseWebVTT(vttText) {{
+            const cues = [];
+            const lines = vttText.split(/\\r?\\n/);
+            let i = 0;
+            while (i < lines.length) {{
+                const line = lines[i].trim();
+                if (line.includes('-->')) {{
+                    const parts = line.split('-->');
+                    const start = parseTimestamp(parts[0].trim());
+                    const end = parseTimestamp(parts[1].trim().split(' ')[0]);
+                    let text = '';
+                    i++;
+                    while (i < lines.length && lines[i].trim() !== '') {{
+                        text += (text ? '<br>' : '') + lines[i].trim();
+                        i++;
+                    }}
+                    if (start >= 0 && end >= 0) cues.push({{ start, end, text }});
                 }}
+                i++;
+            }}
+            return cues;
+        }}
+
+        function parseTimestamp(tStr) {{
+            const parts = tStr.split(':');
+            if (parts.length === 3) {{
+                return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2].replace(',', '.'));
+            }} else if (parts.length === 2) {{
+                return parseFloat(parts[0]) * 60 + parseFloat(parts[1].replace(',', '.'));
+            }}
+            return 0;
+        }}
+
+        function togglePlay(e) {{
+            if (e) e.stopPropagation();
+            const v = document.getElementById('playerVideo');
+            if (v.paused) {{
+                v.play().catch(()=>{{}});
+            }} else {{
+                v.pause();
+            }}
+        }}
+
+        function togglePlayOnTap(e) {{
+            if (e.target.closest('.bottom-controls') || e.target.closest('.center-play-btn')) return;
+            togglePlay(e);
+        }}
+
+        function skipSeconds(delta, e) {{
+            if (e) e.stopPropagation();
+            const realTime = startSecOffset + (document.getElementById('playerVideo').currentTime || 0);
+            const target = Math.max(0, Math.min(totalDurationSec || 999999, realTime + delta));
+            seekToSec(target);
+        }}
+
+        function onSeekInput(pct) {{
+            isUserSeeking = true;
+            const targetSec = (parseFloat(pct) / 100) * totalDurationSec;
+            document.getElementById('timeDisplay').textContent = `${{formatSec(targetSec)}} / ${{formatSec(totalDurationSec)}}`;
+            const seek = document.getElementById('playerSeek');
+            seek.style.background = `linear-gradient(to right, #38bdf8 ${{pct}}%, rgba(255,255,255,0.25) ${{pct}}%)`;
+        }}
+
+        function onSeekChange(pct) {{
+            isUserSeeking = false;
+            const targetSec = (parseFloat(pct) / 100) * totalDurationSec;
+            seekToSec(targetSec);
+        }}
+
+        function seekToSec(targetSec) {{
+            const v = document.getElementById('playerVideo');
+            const isPaused = v.paused;
+            if (activeAudioIndex !== '') {{
+                startSecOffset = targetSec;
+                v.src = `/video?index={current_idx}&audio=${{activeAudioIndex}}&ss=${{targetSec.toFixed(1)}}`;
+                v.load();
+                if (!isPaused) v.play().catch(()=>{{}});
+            }} else {{
+                startSecOffset = 0;
+                v.currentTime = targetSec;
+                if (!isPaused) v.play().catch(()=>{{}});
+            }}
+        }}
+
+        function switchAudioTrack(streamId) {{
+            const v = document.getElementById('playerVideo');
+            if (!v) return;
+            const curRealTime = startSecOffset + (v.currentTime || 0);
+            const isPaused = v.paused;
+            
+            activeAudioIndex = streamId;
+            startSecOffset = (streamId !== '') ? curRealTime : 0;
+            
+            let newSrc = `/video?index={current_idx}`;
+            if (streamId !== '') {{
+                newSrc += `&audio=${{streamId}}`;
+                if (curRealTime > 0.5) newSrc += `&ss=${{curRealTime.toFixed(1)}}`;
             }}
             
             const srcElem = document.getElementById('videoSource');
             if (srcElem) srcElem.src = newSrc;
-            video.src = newSrc;
+            v.src = newSrc;
+            v.load();
             
-            if (streamId === "" && curTime > 0.5) {{
-                video.addEventListener('loadedmetadata', function() {{
-                    video.currentTime = curTime;
-                    if (!isPaused) video.play().catch(()=>{{}});
+            if (streamId === '' && curRealTime > 0.5) {{
+                v.addEventListener('loadedmetadata', () => {{
+                    v.currentTime = curRealTime;
+                    if (!isPaused) v.play().catch(()=>{{}});
                 }}, {{ once: true }});
             }} else {{
-                video.addEventListener('loadedmetadata', function() {{
-                    if (chosenSubIdx >= 0 && video.textTracks) {{
-                        for (let i = 0; i < video.textTracks.length; i++) {{
-                            video.textTracks[i].mode = (i === chosenSubIdx) ? 'showing' : 'disabled';
-                        }}
-                    }}
-                    if (!isPaused) video.play().catch(()=>{{}});
-                }}, {{ once: true }});
+                if (!isPaused) v.play().catch(()=>{{}});
             }}
-            
-            video.load();
         }}
 
-        function switchSubtitleTrack(val) {{
-            const video = document.getElementById('playerVideo');
-            if (!video || !video.textTracks) return;
-            const trackIdx = parseInt(val);
-            for (let i = 0; i < video.textTracks.length; i++) {{
-                if (i === trackIdx) {{
-                    video.textTracks[i].mode = 'showing';
-                }} else {{
-                    video.textTracks[i].mode = 'disabled';
-                }}
+        async function switchSubtitleTrack(streamId) {{
+            activeSubStreamId = streamId;
+            const subOverlay = document.getElementById('subtitlesOverlay');
+            if (streamId === "-1" || !streamId) {{
+                parsedSubCues = [];
+                if (subOverlay) subOverlay.style.display = 'none';
+                return;
+            }}
+            try {{
+                const res = await fetch(`/subtitles?index={current_idx}&stream_id=${{streamId}}`);
+                const text = await res.text();
+                parsedSubCues = parseWebVTT(text);
+            }} catch(e) {{
+                parsedSubCues = [];
+            }}
+        }}
+
+        function showControls() {{
+            const overlay = document.getElementById('playerOverlay');
+            if (!overlay) return;
+            overlay.classList.remove('hidden');
+            if (controlsHideTimeout) clearTimeout(controlsHideTimeout);
+            const v = document.getElementById('playerVideo');
+            if (v && !v.paused) {{
+                controlsHideTimeout = setTimeout(() => {{
+                    overlay.classList.add('hidden');
+                }}, 3500);
+            }}
+        }}
+
+        function toggleFullscreen(e) {{
+            if (e) e.stopPropagation();
+            const container = document.getElementById('playerContainer');
+            if (!document.fullscreenElement) {{
+                container.requestFullscreen().catch(()=>{{}});
+            }} else {{
+                document.exitFullscreen().catch(()=>{{}});
             }}
         }}
 
         window.addEventListener('DOMContentLoaded', () => {{
             const video = document.getElementById('playerVideo');
-            const subSelect = document.getElementById('subTrackSelect');
-            if (video && video.textTracks && subSelect) {{
-                for (let i = 0; i < video.textTracks.length; i++) {{
-                    if (video.textTracks[i].mode === 'showing' || video.textTracks[i].default) {{
-                        subSelect.value = i;
-                        video.textTracks[i].mode = 'showing';
-                        break;
-                    }}
+            if (!video) return;
+
+            video.ontimeupdate = () => {{
+                if (isUserSeeking) return;
+                if (!totalDurationSec && video.duration && isFinite(video.duration) && video.duration > 30) {{
+                    totalDurationSec = video.duration;
                 }}
-            }}
+                const realTime = startSecOffset + (video.currentTime || 0);
+                const pct = totalDurationSec > 0 ? Math.min(100, Math.max(0, (realTime / totalDurationSec) * 100)) : 0;
+                
+                const seek = document.getElementById('playerSeek');
+                if (seek) {{
+                    seek.value = pct;
+                    seek.style.background = `linear-gradient(to right, #38bdf8 ${{pct}}%, rgba(255,255,255,0.25) ${{pct}}%)`;
+                }}
+                const timeDisplay = document.getElementById('timeDisplay');
+                if (timeDisplay) {{
+                    timeDisplay.textContent = `${{formatSec(realTime)}} / ${{formatSec(totalDurationSec)}}`;
+                }}
+                
+                // Renderizado dinámico de subtítulos sincronizados
+                const subOverlay = document.getElementById('subtitlesOverlay');
+                if (subOverlay && parsedSubCues.length > 0) {{
+                    const cue = parsedSubCues.find(c => realTime >= c.start && realTime <= c.end);
+                    if (cue) {{
+                        subOverlay.innerHTML = cue.text;
+                        subOverlay.style.display = 'block';
+                    }} else {{
+                        subOverlay.style.display = 'none';
+                    }}
+                }} else if (subOverlay) {{
+                    subOverlay.style.display = 'none';
+                }}
+            }};
+
+            video.onplay = () => {{
+                const btn = document.getElementById('btnPlay');
+                if (btn) btn.textContent = '⏸';
+                const centerBtn = document.getElementById('centerPlayBtn');
+                if (centerBtn) centerBtn.style.display = 'none';
+                showControls();
+            }};
+
+            video.onpause = () => {{
+                const btn = document.getElementById('btnPlay');
+                if (btn) btn.textContent = '▶';
+                const centerBtn = document.getElementById('centerPlayBtn');
+                if (centerBtn) centerBtn.style.display = 'flex';
+                const overlay = document.getElementById('playerOverlay');
+                if (overlay) overlay.classList.remove('hidden');
+                if (controlsHideTimeout) clearTimeout(controlsHideTimeout);
+            }};
+
+            document.addEventListener('keydown', (e) => {{
+                if (document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+                if (e.key === ' ' || e.key === 'k' || e.key === 'K') {{
+                    e.preventDefault();
+                    togglePlay();
+                }} else if (e.key === 'ArrowLeft') {{
+                    e.preventDefault();
+                    skipSeconds(-10);
+                }} else if (e.key === 'ArrowRight') {{
+                    e.preventDefault();
+                    skipSeconds(10);
+                }} else if (e.key === 'f' || e.key === 'F') {{
+                    e.preventDefault();
+                    toggleFullscreen();
+                }}
+            }});
+
+            video.play().catch(()=>{{}});
         }});
 
         function selectTitleVariant(itemId, chosenTitle, tmdbId, year) {{
