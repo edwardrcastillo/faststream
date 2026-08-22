@@ -31,13 +31,14 @@ Features:
 - Configurable TMDB API Key (CLI flag, ENV var, or ~/.config/faststream/config.json)
 """
 
-import sys, os, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re, struct, threading, time, html, unicodedata, tempfile, hashlib
+import sys, os, shutil, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re, struct, threading, time, html, unicodedata, tempfile, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 CONFIG_DIR = os.path.expanduser("~/.config/faststream")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_FALLBACK_KEY = "a07e22bc18f5cb106bfe4cc1f83ad8ed"
 VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.ts', '.flv', '.wmv'}
+ALLOWED_UPLOAD_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.ts', '.flv', '.wmv', '.srt', '.vtt', '.ass', '.sub', '.idx'}
 
 # In-memory TMDB Cache
 TMDB_MEMORY_CACHE = {}
@@ -757,6 +758,18 @@ def generate_catalog_html(folder_path, items_meta):
     folder_name = os.path.basename(folder_path.rstrip('/\\')) or folder_path
     total_items = len(items_meta)
     
+    subfolders = []
+    try:
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            for entry in sorted(os.listdir(folder_path)):
+                p = os.path.join(folder_path, entry)
+                if os.path.isdir(p) and not entry.startswith('.'):
+                    subfolders.append(entry)
+    except Exception:
+        pass
+        
+    subfolders_json = json.dumps(subfolders)
+    
     cards_html = []
     for idx, it in enumerate(items_meta):
         safe_title = html.escape(it.get('title', ''))
@@ -767,7 +780,7 @@ def generate_catalog_html(folder_path, items_meta):
         rating_badge = f'<span class="badge rating">⭐ {it.get("rating")}</span>' if it.get("rating") else ''
         
         cards_html.append(f"""
-        <div class="media-card" onclick="window.location.href='/play?index={idx}'" data-title="{norm_card_search}">
+        <div class="media-card" onclick="window.location.href='/play?index={idx}'" data-title="{norm_card_search}" id="card-{idx}">
             <div class="poster-container">
                 {poster_tag}
                 <div class="badge-overlay">
@@ -844,15 +857,35 @@ def generate_catalog_html(folder_path, items_meta):
         .header-actions {{
             display: flex;
             align-items: center;
-            gap: 14px;
+            gap: 12px;
             flex-grow: 1;
-            max-width: 600px;
+            max-width: 680px;
             justify-content: flex-end;
+        }}
+        .upload-btn {{
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(129, 140, 248, 0.2));
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }}
+        .upload-btn:hover {{
+            background: #38bdf8;
+            color: #0f172a;
+            box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
         }}
         .search-box {{
             position: relative;
             flex-grow: 1;
-            max-width: 420px;
+            max-width: 360px;
         }}
         .search-input {{
             width: 100%;
@@ -959,19 +992,18 @@ def generate_catalog_html(folder_path, items_meta):
             background: rgba(15, 23, 42, 0.8);
             backdrop-filter: blur(8px);
             border: 1px solid rgba(255, 255, 255, 0.15);
-            padding: 3px 7px;
+            padding: 3px 8px;
             border-radius: 6px;
             font-size: 11px;
             font-weight: 700;
             color: #f8fafc;
         }}
-        .badge.rating {{
-            color: #fbbf24;
-        }}
+        .badge.rating {{ color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); }}
+        .badge.year {{ color: #94a3b8; }}
         .play-overlay {{
             position: absolute;
             inset: 0;
-            background: rgba(0, 0, 0, 0.4);
+            background: rgba(15, 23, 42, 0.4);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1027,15 +1059,262 @@ def generate_catalog_html(folder_path, items_meta):
             color: #94a3b8;
             font-size: 16px;
         }}
+
+        /* DRAG AND DROP OVERLAY */
+        .dropzone-overlay {{
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(14px);
+            z-index: 9000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }}
+        .dropzone-box {{
+            border: 3px dashed #38bdf8;
+            background: rgba(56, 189, 248, 0.08);
+            border-radius: 24px;
+            padding: 50px 80px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            animation: pulse 1.8s infinite;
+        }}
+        @keyframes pulse {{
+            0%, 100% {{ transform: scale(1); border-color: #38bdf8; box-shadow: 0 0 30px rgba(56, 189, 248, 0.2); }}
+            50% {{ transform: scale(1.02); border-color: #818cf8; box-shadow: 0 0 50px rgba(129, 140, 248, 0.4); }}
+        }}
+        .dropzone-icon {{ font-size: 54px; }}
+        .dropzone-title {{ font-size: 24px; font-weight: 800; color: #fff; }}
+        .dropzone-sub {{ font-size: 14px; color: #94a3b8; }}
+
+        /* MODALS */
+        .modal-overlay {{
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 8000;
+            padding: 20px;
+        }}
+        .modal-card {{
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 18px;
+            width: 100%;
+            max-width: 580px;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 24px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.9);
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }}
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .modal-header h2 {{ margin: 0; font-size: 19px; color: #f8fafc; }}
+        .close-btn {{
+            background: #1e293b;
+            border: none;
+            color: #94a3b8;
+            font-size: 16px;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+        }}
+        .form-group {{
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }}
+        .form-label {{ font-size: 13px; font-weight: 600; color: #cbd5e1; }}
+        .form-select, .form-input {{
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            width: 100%;
+        }}
+        .form-select:focus, .form-input:focus {{
+            border-color: #38bdf8;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+        }}
+        .files-preview-list {{
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            max-height: 180px;
+            overflow-y: auto;
+            padding: 8px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }}
+        .file-preview-item {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            color: #cbd5e1;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }}
+        .file-preview-item:last-child {{ border-bottom: none; }}
+        .file-preview-name {{
+            font-weight: 600;
+            color: #38bdf8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 380px;
+        }}
+        .file-preview-size {{ font-size: 12px; color: #94a3b8; flex-shrink: 0; }}
+        .submit-upload-btn {{
+            background: linear-gradient(135deg, #38bdf8, #818cf8);
+            color: #0f172a;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }}
+        .submit-upload-btn:hover {{
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+            transform: translateY(-1px);
+        }}
+
+        /* FLOATING PROGRESS CARD */
+        .upload-progress-card {{
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: rgba(15, 23, 42, 0.96);
+            border: 1px solid #38bdf8;
+            border-radius: 14px;
+            padding: 16px 20px;
+            width: 360px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.7);
+            backdrop-filter: blur(12px);
+            z-index: 9500;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        .progress-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            font-weight: 700;
+            color: #fff;
+        }}
+        .progress-bar-track {{
+            background: #1e293b;
+            border-radius: 6px;
+            height: 8px;
+            width: 100%;
+            overflow: hidden;
+        }}
+        .progress-bar-fill {{
+            background: linear-gradient(90deg, #38bdf8, #818cf8);
+            height: 100%;
+            width: 0%;
+            transition: width 0.15s ease-out;
+        }}
+        .progress-stats {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #94a3b8;
+        }}
     </style>
 </head>
 <body>
+    <!-- DRAG AND DROP FULLSCREEN OVERLAY -->
+    <div id="dropzoneOverlay" class="dropzone-overlay">
+        <div class="dropzone-box">
+            <div class="dropzone-icon">📥</div>
+            <div class="dropzone-title">Suelta tus archivos de Video o Subtítulos</div>
+            <div class="dropzone-sub">Se alojarán en la carpeta: <b>{html.escape(folder_name)}</b></div>
+        </div>
+    </div>
+
+    <!-- UPLOAD MODAL -->
+    <div id="uploadModal" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>📤 Subir Archivos a {html.escape(folder_name)}</h2>
+                <button class="close-btn" onclick="closeUploadModal()">✕</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Archivos seleccionados (<span id="uploadFileCount">0</span>):</label>
+                <div id="uploadFilesPreview" class="files-preview-list"></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="folderSelect">Destino / Subcarpeta:</label>
+                <select id="folderSelect" class="form-select" onchange="onFolderSelectChange(this.value)">
+                    <option value="">🏠 Guardar en la raíz de {html.escape(folder_name)}</option>
+                </select>
+            </div>
+            <div id="newFolderGroup" class="form-group" style="display:none;">
+                <label class="form-label" for="newFolderInput">Nombre de la nueva subcarpeta:</label>
+                <input type="text" id="newFolderInput" class="form-input" placeholder="Ej: Season 18 o Peliculas..." />
+            </div>
+            <button class="submit-upload-btn" onclick="startUploadingFiles()">
+                <span>🚀 Comenzar Subida</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- FLOATING PROGRESS BAR CARD -->
+    <div id="uploadProgressCard" class="upload-progress-card">
+        <div class="progress-header">
+            <span id="progressFileTitle">Subiendo archivo...</span>
+            <span id="progressPercent" style="color:#38bdf8;">0%</span>
+        </div>
+        <div class="progress-bar-track">
+            <div id="progressBarFill" class="progress-bar-fill"></div>
+        </div>
+        <div class="progress-stats">
+            <span id="progressSpeed">0.0 MB/s</span>
+            <span id="progressBytes">0 MB / 0 MB</span>
+            <span id="progressEta">ETA: --</span>
+        </div>
+    </div>
+
+    <input type="file" id="filePickerInput" multiple accept=".mp4,.mkv,.avi,.mov,.webm,.m4v,.ts,.flv,.wmv,.srt,.vtt,.ass,.sub,.idx" style="display:none;" onchange="handlePickedFiles(this.files)" />
+
     <header>
         <div class="brand">
             <h1>⚡ FastStream Hub</h1>
-            <div class="folder-badge">📂 {html.escape(folder_name)} ({total_items} títulos)</div>
+            <div id="folderBadge" class="folder-badge">📂 {html.escape(folder_name)} ({total_items} títulos)</div>
         </div>
         <div class="header-actions">
+            <button class="upload-btn" onclick="document.getElementById('filePickerInput').click()">
+                <span>📤 Subir Video</span>
+            </button>
             <div class="search-box">
                 <span class="search-icon">🔍</span>
                 <input type="text" id="catalogSearch" class="search-input" placeholder="Filtrar por título, año..." oninput="filterCatalog()">
@@ -1052,9 +1331,243 @@ def generate_catalog_html(folder_path, items_meta):
         </div>
     </main>
     <script>
+        const initialSubfolders = {subfolders_json};
+        let currentSubfolders = [...initialSubfolders];
+        let queuedFiles = [];
+        let isUploading = false;
+
         function normalizeClientStr(s) {{
             if (!s) return '';
             return s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();
+        }}
+
+        function formatBytes(bytes) {{
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }}
+
+        function populateFolderDropdown() {{
+            const select = document.getElementById('folderSelect');
+            select.innerHTML = '<option value="">🏠 Guardar en la raíz</option>';
+            currentSubfolders.forEach(sub => {{
+                const opt = document.createElement('option');
+                opt.value = sub;
+                opt.textContent = `📁 ${{sub}}`;
+                select.appendChild(opt);
+            }});
+            const newOpt = document.createElement('option');
+            newOpt.value = '__NEW__';
+            newOpt.textContent = '➕ Crear nueva subcarpeta...';
+            select.appendChild(newOpt);
+        }}
+
+        function onFolderSelectChange(val) {{
+            const newGroup = document.getElementById('newFolderGroup');
+            if (val === '__NEW__') {{
+                newGroup.style.display = 'flex';
+                document.getElementById('newFolderInput').focus();
+            }} else {{
+                newGroup.style.display = 'none';
+            }}
+        }}
+
+        function openUploadModal(files) {{
+            queuedFiles = Array.from(files || []);
+            if (queuedFiles.length === 0) return;
+            populateFolderDropdown();
+            document.getElementById('uploadFileCount').textContent = queuedFiles.length;
+            const preview = document.getElementById('uploadFilesPreview');
+            preview.innerHTML = '';
+            queuedFiles.forEach(f => {{
+                const row = document.createElement('div');
+                row.className = 'file-preview-item';
+                row.innerHTML = `<span class="file-preview-name">${{escapeHtml(f.name)}}</span><span class="file-preview-size">${{formatBytes(f.size)}}</span>`;
+                preview.appendChild(row);
+            }});
+            document.getElementById('uploadModal').style.display = 'flex';
+        }}
+
+        function closeUploadModal() {{
+            if (isUploading) return;
+            document.getElementById('uploadModal').style.display = 'none';
+            queuedFiles = [];
+        }}
+
+        function handlePickedFiles(files) {{
+            if (files && files.length > 0) {{
+                openUploadModal(files);
+            }}
+        }}
+
+        function escapeHtml(str) {{
+            if (!str) return '';
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        }}
+
+        // DRAG AND DROP EVENTS
+        let dragCounter = 0;
+        window.addEventListener('dragenter', e => {{
+            e.preventDefault();
+            dragCounter++;
+            document.getElementById('dropzoneOverlay').style.display = 'flex';
+        }});
+        window.addEventListener('dragover', e => {{
+            e.preventDefault();
+        }});
+        window.addEventListener('dragleave', e => {{
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter <= 0) {{
+                dragCounter = 0;
+                document.getElementById('dropzoneOverlay').style.display = 'none';
+            }}
+        }});
+        window.addEventListener('drop', e => {{
+            e.preventDefault();
+            dragCounter = 0;
+            document.getElementById('dropzoneOverlay').style.display = 'none';
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {{
+                openUploadModal(e.dataTransfer.files);
+            }}
+        }});
+
+        // UPLOAD PIPELINE
+        async function startUploadingFiles() {{
+            if (queuedFiles.length === 0 || isUploading) return;
+            isUploading = true;
+            
+            const folderSelect = document.getElementById('folderSelect');
+            let targetFolder = folderSelect.value;
+            if (targetFolder === '__NEW__') {{
+                const customName = document.getElementById('newFolderInput').value.trim();
+                if (customName) {{
+                    targetFolder = customName;
+                    if (!currentSubfolders.includes(customName)) {{
+                        currentSubfolders.push(customName);
+                    }}
+                }} else {{
+                    targetFolder = '';
+                }}
+            }}
+            
+            document.getElementById('uploadModal').style.display = 'none';
+            const progressCard = document.getElementById('uploadProgressCard');
+            progressCard.style.display = 'flex';
+            
+            for (let i = 0; i < queuedFiles.length; i++) {{
+                const file = queuedFiles[i];
+                await uploadSingleFile(file, targetFolder, i + 1, queuedFiles.length);
+            }}
+            
+            progressCard.style.display = 'none';
+            isUploading = false;
+            queuedFiles = [];
+            document.getElementById('filePickerInput').value = '';
+        }}
+
+        function uploadSingleFile(file, targetFolder, curNum, totalNum) {{
+            return new Promise((resolve, reject) => {{
+                const xhr = new XMLHttpRequest();
+                const startTime = Date.now();
+                let lastLoaded = 0;
+                let lastTime = startTime;
+                
+                document.getElementById('progressFileTitle').textContent = `[${{curNum}}/${{totalNum}}] ${{file.name}}`;
+                
+                xhr.upload.onprogress = (e) => {{
+                    if (e.lengthComputable) {{
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        document.getElementById('progressBarFill').style.width = percent + '%';
+                        document.getElementById('progressPercent').textContent = percent + '%';
+                        document.getElementById('progressBytes').textContent = `${{formatBytes(e.loaded)}} / ${{formatBytes(e.total)}}`;
+                        
+                        const now = Date.now();
+                        const timeDiff = (now - lastTime) / 1000;
+                        if (timeDiff >= 0.5) {{
+                            const bytesDiff = e.loaded - lastLoaded;
+                            const speedBytes = bytesDiff / timeDiff;
+                            document.getElementById('progressSpeed').textContent = `${{formatBytes(speedBytes)}}/s`;
+                            
+                            const remainingBytes = e.total - e.loaded;
+                            const etaSec = speedBytes > 0 ? Math.round(remainingBytes / speedBytes) : 0;
+                            document.getElementById('progressEta').textContent = `ETA: ${{etaSec}}s`;
+                            
+                            lastLoaded = e.loaded;
+                            lastTime = now;
+                        }}
+                    }}
+                }};
+                
+                xhr.onload = () => {{
+                    if (xhr.status === 200) {{
+                        try {{
+                            const res = JSON.parse(xhr.responseText);
+                            if (res.success && res.is_video && res.item) {{
+                                appendNewCard(res.item, res.index);
+                            }}
+                        }} catch(e) {{}}
+                        resolve();
+                    }} else {{
+                        alert(`❌ Error subiendo ${{file.name}}: ${{xhr.statusText}}`);
+                        resolve();
+                    }}
+                }};
+                
+                xhr.onerror = () => {{
+                    alert(`❌ Error de conexión al subir ${{file.name}}`);
+                    resolve();
+                }};
+                
+                xhr.open('POST', '/api/upload', true);
+                xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+                xhr.setRequestHeader('X-Target-Folder', encodeURIComponent(targetFolder));
+                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+                xhr.send(file);
+            }});
+        }}
+
+        function appendNewCard(it, idx) {{
+            const grid = document.getElementById('catalogGrid');
+            const safeTitle = escapeHtml(it.title || '');
+            const normCard = normalizeClientStr(`${{it.title || ''}} ${{it.filename || ''}} ${{it.year || ''}}`);
+            const posterTag = it.poster_url ? `<img src="${{it.poster_url}}" loading="lazy" class="card-img" alt="${{safeTitle}}">` : '<div class="card-no-poster">🎬</div>';
+            const yearBadge = it.year ? `<span class="badge year">${{it.year}}</span>` : '';
+            const ratingBadge = it.rating ? `<span class="badge rating">⭐ ${{it.rating}}</span>` : '';
+            
+            const card = document.createElement('div');
+            card.className = 'media-card';
+            card.id = `card-${{idx}}`;
+            card.setAttribute('data-title', normCard);
+            card.onclick = () => window.location.href = `/play?index=${{idx}}`;
+            card.innerHTML = `
+                <div class="poster-container">
+                    ${{posterTag}}
+                    <div class="badge-overlay">
+                        ${{ratingBadge}}
+                        ${{yearBadge}}
+                    </div>
+                    <div class="play-overlay">
+                        <div class="play-icon">▶</div>
+                    </div>
+                </div>
+                <div class="card-info">
+                    <h3 class="card-title" title="${{safeTitle}}">${{safeTitle}}</h3>
+                    <div class="card-meta">
+                        <span>⏱️ ${{it.duration || 'HD'}}</span>
+                        <span>📦 ${{it.size_mb || ''}}</span>
+                    </div>
+                </div>
+            `;
+            grid.insertBefore(card, grid.firstChild);
+            
+            const allCards = document.querySelectorAll('.media-card');
+            const folderBadge = document.getElementById('folderBadge');
+            if (folderBadge) {{
+                folderBadge.textContent = `📂 {html.escape(folder_name)} (${{allCards.length}} títulos)`;
+            }}
         }}
 
         function filterCatalog() {{
@@ -1089,7 +1602,7 @@ def generate_catalog_html(folder_path, items_meta):
         }}
 
         document.addEventListener('keydown', e => {{
-            if (e.key === '/' && document.activeElement !== document.getElementById('catalogSearch')) {{
+            if (e.key === '/' && document.activeElement !== document.getElementById('catalogSearch') && document.activeElement !== document.getElementById('newFolderInput')) {{
                 e.preventDefault();
                 document.getElementById('catalogSearch').focus();
             }}
@@ -1999,6 +2512,22 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                     pass
                 return
 
+            if parsed.path == "/api/subfolders":
+                subdirs = []
+                if is_dir and os.path.exists(abs_target):
+                    try:
+                        for entry in sorted(os.listdir(abs_target)):
+                            p = os.path.join(abs_target, entry)
+                            if os.path.isdir(p) and not entry.startswith('.'):
+                                subdirs.append(entry)
+                    except Exception:
+                        pass
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "subfolders": subdirs}).encode("utf-8"))
+                return
+
             if parsed.path == "/api/prepare_audio":
                 qs = urllib.parse.parse_qs(parsed.query)
                 idx = int(qs.get("index", ["0"])[0])
@@ -2249,6 +2778,133 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.end_headers()
                     self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode('utf-8'))
+                return
+
+            if parsed.path == "/api/mkdir":
+                if not is_dir:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": "Creación de carpetas solo disponible en modo catálogo"}).encode("utf-8"))
+                    return
+                try:
+                    content_length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(content_length).decode('utf-8')
+                    data = json.loads(body)
+                    folder_name = data.get("folder_name", "").strip()
+                    if not folder_name:
+                        raise ValueError("Nombre de carpeta vacío")
+                    safe_folder = os.path.normpath(folder_name).lstrip("/\\.")
+                    target_d = os.path.abspath(os.path.join(abs_target, safe_folder))
+                    if not target_d.startswith(abs_target):
+                        raise PermissionError("Acceso denegado fuera de la carpeta base")
+                    os.makedirs(target_d, exist_ok=True)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": True, "folder": safe_folder}).encode("utf-8"))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+                return
+
+            if parsed.path == "/api/upload":
+                if not is_dir:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": "Subida solo disponible en modo catálogo"}).encode("utf-8"))
+                    return
+                
+                tmp_dest = None
+                try:
+                    raw_filename = self.headers.get("X-File-Name", "")
+                    filename = urllib.parse.unquote(raw_filename).strip()
+                    rel_subfolder = urllib.parse.unquote(self.headers.get("X-Target-Folder", "")).strip()
+                    content_length = int(self.headers.get("Content-Length", 0))
+                    
+                    if not filename:
+                        raise ValueError("Cabecera X-File-Name requerida")
+                    if content_length <= 0:
+                        raise ValueError("El archivo está vacío o Content-Length es 0")
+                        
+                    safe_filename = os.path.basename(filename)
+                    ext = os.path.splitext(safe_filename)[1].lower()
+                    if ext not in ALLOWED_UPLOAD_EXTS:
+                        raise ValueError(f"Extensión '{ext}' no permitida. Solo videos y subtítulos soportados.")
+                        
+                    safe_folder = os.path.normpath(rel_subfolder).lstrip("/\\.") if rel_subfolder else ""
+                    dest_dir = os.path.abspath(os.path.join(abs_target, safe_folder))
+                    if not dest_dir.startswith(abs_target):
+                        raise PermissionError("Acceso no permitido fuera del directorio base")
+                    os.makedirs(dest_dir, exist_ok=True)
+                    
+                    # Comprobación preventiva de espacio libre
+                    try:
+                        free_space = shutil.disk_usage(dest_dir).free
+                        if content_length > free_space - 100 * 1024 * 1024:
+                            raise IOError("Espacio insuficiente en disco para almacenar el archivo")
+                    except Exception as e:
+                        if "Espacio insuficiente" in str(e): raise e
+                        
+                    # Prevenir sobrescritura accidental con auto-sufijo
+                    final_path = os.path.join(dest_dir, safe_filename)
+                    base_no_ext, file_ext = os.path.splitext(safe_filename)
+                    counter = 1
+                    while os.path.exists(final_path):
+                        final_path = os.path.join(dest_dir, f"{base_no_ext} ({counter}){file_ext}")
+                        counter += 1
+                        
+                    tmp_dest = final_path + f".{int(time.time())}.upload_tmp"
+                    
+                    # Streaming en chunks de 64 KB a disco (RAM < 10 MB)
+                    remaining = content_length
+                    with open(tmp_dest, "wb") as f_out:
+                        while remaining > 0:
+                            chunk_sz = min(remaining, 64 * 1024)
+                            chunk = self.rfile.read(chunk_sz)
+                            if not chunk:
+                                raise ConnectionAbortedError("Transferencia interrumpida por el cliente")
+                            f_out.write(chunk)
+                            remaining -= len(chunk)
+                            
+                    # Renombrado atómico
+                    os.replace(tmp_dest, final_path)
+                    
+                    # Indexar en catálogo si es archivo de video
+                    new_item = None
+                    new_idx = -1
+                    if ext in VIDEO_EXTS:
+                        file_list.append(final_path)
+                        new_meta = get_file_metadata(final_path, api_key)
+                        catalog_items.append(new_meta)
+                        new_idx = len(file_list) - 1
+                        new_item = new_meta
+                        print(f"\n📥 [Upload Exitoso] {os.path.basename(final_path)} ({new_meta.get('size_mb', '')}) agregado al catálogo.")
+                    else:
+                        print(f"\n📥 [Upload Subtítulo] {os.path.basename(final_path)} guardado en {dest_dir}.")
+                        
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "success": True,
+                        "filename": os.path.basename(final_path),
+                        "path": final_path,
+                        "index": new_idx,
+                        "is_video": ext in VIDEO_EXTS,
+                        "item": new_item
+                    }).encode("utf-8"))
+                except Exception as e:
+                    if tmp_dest and os.path.exists(tmp_dest):
+                        try: os.remove(tmp_dest)
+                        except Exception: pass
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
                 return
 
             self.send_error(404)
