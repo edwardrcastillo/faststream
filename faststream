@@ -3649,6 +3649,92 @@ def remove_context_menu():
         except Exception as e:
             print(f"❌ Error al eliminar claves en Windows: {e}\n")
 
+def self_update():
+    print("\n" + "="*66)
+    print("⚡ FASTSTREAM - ACTUALIZADOR AUTOMÁTICO EN 1 CLIC")
+    print("="*66)
+    
+    current_exe = os.path.realpath(sys.argv[0])
+    target_paths = []
+    
+    if os.path.isfile(current_exe):
+        target_paths.append(current_exe)
+        
+    which_faststream = shutil.which("faststream")
+    if which_faststream:
+        target_paths.append(os.path.realpath(which_faststream))
+        
+    target_paths.append(os.path.expanduser("~/.local/bin/faststream"))
+    target_paths.append("/usr/local/bin/faststream")
+    
+    # Deduplicar preservando orden
+    unique_targets = []
+    for p in target_paths:
+        if p not in unique_targets:
+            unique_targets.append(p)
+            
+    valid_destinations = []
+    for tp in unique_targets:
+        parent = os.path.dirname(tp)
+        if os.path.exists(tp) and os.access(tp, os.W_OK):
+            valid_destinations.append(tp)
+        elif not os.path.exists(tp) and os.path.exists(parent) and os.access(parent, os.W_OK):
+            valid_destinations.append(tp)
+            
+    if not valid_destinations:
+        user_local = os.path.expanduser("~/.local/bin")
+        os.makedirs(user_local, exist_ok=True)
+        valid_destinations.append(os.path.join(user_local, "faststream"))
+
+    print("⬇️ Descargando la versión más reciente desde GitHub...")
+    remote_url = "https://raw.githubusercontent.com/edwardrcastillo/faststream/main/faststream"
+    try:
+        req = urllib.request.Request(
+            remote_url,
+            headers={"User-Agent": "FastStream-AutoUpdater/2.2", "Cache-Control": "no-cache"}
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            if resp.status != 200:
+                raise Exception(f"HTTP {resp.status} al descargar de GitHub")
+            new_code = resp.read()
+    except Exception as e:
+        print(f"❌ Error al descargar actualización desde GitHub: {e}")
+        print("💡 Verifica tu conexión a internet o intenta instalar con:")
+        print("   curl -sSL https://raw.githubusercontent.com/edwardrcastillo/faststream/main/install.sh | bash\n")
+        sys.exit(1)
+
+    try:
+        compile(new_code, "<faststream_update>", "exec")
+    except Exception as e:
+        print(f"❌ Error: El código descargado contiene errores de sintaxis: {e}")
+        sys.exit(1)
+
+    match_v = re.search(r'v\d+\.\d+\.\d+', new_code.decode('utf-8', errors='ignore'))
+    new_version_str = match_v.group(0) if match_v else "más reciente"
+
+    updated_locations = []
+    for dest in valid_destinations:
+        try:
+            tmp_dest = dest + f".{int(time.time())}.tmp"
+            with open(tmp_dest, "wb") as f_out:
+                f_out.write(new_code)
+            os.chmod(tmp_dest, 0o755)
+            os.replace(tmp_dest, dest)
+            updated_locations.append(dest)
+        except Exception as e:
+            pass
+
+    if updated_locations:
+        print(f"✅ ¡FastStream actualizado con éxito a la versión {new_version_str}!")
+        for loc in updated_locations:
+            print(f"   📍 Actualizado en: {loc}")
+        print("="*66 + "\n")
+    else:
+        print("⚠️ No se pudo escribir en las rutas del sistema por falta de permisos.")
+        print("💡 Prueba ejecutando con sudo:")
+        print("   sudo faststream --update\n")
+        sys.exit(1)
+
 def main():
     parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante con selector de audio, subtítulos y menú contextual.")
     parser.add_argument("target", nargs="?", help="Ruta al archivo de video o carpeta a transmitir.")
@@ -3661,33 +3747,16 @@ def main():
     parser.add_argument("--update", action="store_true", help="Actualizar FastStream a la versión más reciente del repositorio.")
     args = parser.parse_args()
     
+    if args.update:
+        self_update()
+        sys.exit(0)
+
     if args.install_menu:
         install_context_menu()
         sys.exit(0)
 
     if args.remove_menu:
         remove_context_menu()
-        sys.exit(0)
-
-    if args.update:
-        candidate_paths = [
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "update_faststream.sh"),
-            os.path.join(os.getcwd(), "scripts", "update_faststream.sh"),
-            os.path.expanduser("~/Documents/FastMovie_Travel_Local/scripts/update_faststream.sh"),
-            "/home/edward/proyectos/FastMovie_Travel_Local/scripts/update_faststream.sh"
-        ]
-        found_script = None
-        for p in candidate_paths:
-            if os.path.exists(p):
-                found_script = p
-                break
-                
-        if found_script:
-            subprocess.run(["bash", found_script])
-        else:
-            print("❌ No se encontró el script de actualización scripts/update_faststream.sh")
-            print("💡 Ejecuta el script directamente desde la raíz del repositorio con:")
-            print("   bash scripts/update_faststream.sh")
         sys.exit(0)
 
     if args.set_tmdb_key:
