@@ -8,6 +8,7 @@
 ## ✨ Características Principales
 
 - 🚀 **100% Cero Dependencias de Python:** Construido exclusivamente con la biblioteca estándar de Python 3 (`http.server` + `socketserver` + `struct` + `urllib`). Cero `pip install`, cero `npm`, cero compiladores pesados.
+- 🎬 **Hero Billboard Cinematográfico & Carrusel Slider en Vanilla CSS/JS:** En modo carpeta, genera automáticamente una cabecera Hero rotativa estilo Netflix con fondos en alta resolución (*backdrops*), doble degradado glassmorphic, sinopsis oficial, calificación `⭐`, rotación automática cada 7s y un carrusel horizontal con *Scroll-Snap* nativo y flechas flotantes **sin usar librerías externas**.
 - 🖱️ **Integración en Menú Contextual (Clic Derecho en macOS, Linux y Windows):** Instala en 1 segundo con `faststream --install-menu` para hacer clic derecho sobre cualquier video o carpeta en **macOS Finder (Acciones Rápidas)**, **Linux (GNOME / Nautilus / KDE Dolphin / Nemo)** o **Windows Explorer** y seleccionar **`⚡ Transmitir con FastStream`** abriendo la consola y el reproductor al instante.
 - 📥 **Subida por Drag & Drop en Streaming (Chunks de 64 KB):** Arrastra y suelta cualquier video o archivo de subtítulos sobre la ventana del navegador en modo catálogo. El servidor procesa la subida en chunks de 64 KB manteniendo el consumo de memoria RAM en **<10 MB** (incluso en archivos de 10+ GB), con barra de progreso flotante, velocidad en tiempo real (`MB/s`), tiempo estimado (*ETA*), selector/creación de subcarpetas en 1 clic y auto-enriquecimiento de metadatos en caliente sin recargar la página.
 - 🛡️ **Seguridad y Blindaje Anti-Path Traversal:** Verificación estricta de rutas (`os.path.abspath`), lista blanca de extensiones de video y subtítulos (`.mp4`, `.mkv`, `.srt`, `.vtt`, etc.), auto-sufijo de autonumeración preventivo `(1).mp4` para evitar sobrescrituras destructivas y escritura atómica sobre archivos `.upload_tmp`.
@@ -142,8 +143,9 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 | **Lenguaje / Motor** | **Python 3 Puro** (Stdlib) | **Rust** (Actix-web) | **Rust** (Hyper / Tokio) |
 | **Dependencias de Librerías** | **0 dependencias** (Cero pip/npm) | Binario compilado | Binario compilado |
 | **Herramientas del Sistema** | **Ninguna obligatoria** (FFprobe opcional) | Ninguna | Ninguna |
-| **Peso del Ejecutable** | **~137 KB** (140 KB / 3,298 líneas en 1 solo archivo) | Binario (~15 MB) | Binario (~6 MB) |
+| **Peso del Ejecutable** | **~152 KB** (155 KB / 3,705 líneas en 1 solo archivo) | Binario (~15 MB) | Binario (~6 MB) |
 | **Propósito Principal** | **Streaming Multimedia, Auditoría, Ingesta y Renombrado** | **Compartir archivos y subidas** | **Servidor de archivos / WebDAV** |
+| **Hero Billboard & Slider** | ✅ **Nativo (Autoplay 7s + Scroll Snap)** | ❌ No disponible | ❌ No disponible |
 | **Menú Contextual (Clic Derecho)** | ✅ **1-Click Nativo (Finder, Nautilus, Dolphin, Win)** | ❌ No disponible | ❌ No disponible |
 | **Subida por Drag & Drop** | ✅ **Streaming en Chunks de 64 KB** | ⚠️ Formulario multipart plano | ⚠️ Formulario multipart plano |
 | **Uso de RAM en Subidas (10 GB+)** | ⚡ **Fijo < 10 MB** (Sin buffer explosivo) | ⚠️ Variable según buffer multipart | ⚠️ Variable |
@@ -179,6 +181,7 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 - [x] Apagado y liberación de puerto remota desde el navegador web.
 - [x] Subida de archivos por **Drag & Drop** en streaming de 64 KB con creación de subcarpetas y progreso en vivo.
 - [x] Integración en el menú contextual del explorador (macOS Finder, Linux Nautilus/Dolphin, Windows).
+- [x] Hero Billboard rotativo y Slider horizontal estilo Netflix en Vanilla CSS/JS.
 - [x] Actualizador automático integrado en CLI (`--update`) y script `update.sh`.
 - [ ] Transcodificación por hardware al vuelo (VideoToolbox / NVENC / VAAPI) para códecs antiguos no soportados en navegadores.
 - [ ] Modo batch CLI (`faststream --batch-rename /carpeta/`) para renombrado masivo asistido.

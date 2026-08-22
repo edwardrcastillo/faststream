@@ -770,6 +770,86 @@ def generate_catalog_html(folder_path, items_meta):
         
     subfolders_json = json.dumps(subfolders)
     
+    # 1. Preparar slides para Hero Billboard (Top 5 con carátula/backdrop)
+    featured_candidates = []
+    for idx, it in enumerate(items_meta):
+        if it.get("backdrop_url") or it.get("poster_url") or it.get("rating"):
+            featured_candidates.append((idx, it))
+    if not featured_candidates and items_meta:
+        featured_candidates = [(0, items_meta[0])]
+    hero_data = featured_candidates[:5]
+    
+    hero_slides_html = []
+    hero_dots_html = []
+    for s_idx, (orig_idx, it) in enumerate(hero_data):
+        bg_img = it.get("backdrop_url") or it.get("poster_url") or ""
+        s_title = html.escape(it.get("title", ""))
+        s_synopsis = html.escape(it.get("description", "Haz clic en reproducir para ver este título al instante con selección de pistas de audio y subtítulos."))
+        s_year = f'<span class="hero-tag year">{it.get("year")}</span>' if it.get("year") else ""
+        s_rating = f'<span class="hero-tag rating">⭐ {it.get("rating")}</span>' if it.get("rating") else ""
+        s_dur = f'<span class="hero-tag">⏱️ {it.get("duration", "HD")}</span>' if it.get("duration") else ""
+        s_res = f'<span class="hero-tag">📺 {it.get("resolution", "720p")}</span>' if it.get("resolution") else ""
+        
+        active_cls = "active" if s_idx == 0 else ""
+        act_dot = "active" if s_idx == 0 else ""
+        
+        hero_slides_html.append(f"""
+        <div class="hero-slide {active_cls}" style="background-image: linear-gradient(to right, #090d16 12%, rgba(9,13,22,0.85) 45%, rgba(9,13,22,0.2) 100%), linear-gradient(to top, #090d16 0%, transparent 60%), url('{bg_img}');" data-slide="{s_idx}">
+            <div class="hero-content">
+                <div class="hero-badge-top">🔥 DESTACADO EN {html.escape(folder_name.upper())}</div>
+                <h2 class="hero-title">{s_title}</h2>
+                <div class="hero-meta-row">
+                    {s_rating}
+                    {s_year}
+                    {s_dur}
+                    {s_res}
+                </div>
+                <p class="hero-desc">{s_synopsis}</p>
+                <div class="hero-actions">
+                    <button class="hero-play-btn" onclick="window.location.href='/play?index={orig_idx}'">
+                        <span>▶ Ver Ahora</span>
+                    </button>
+                    <button class="hero-info-btn" onclick="window.location.href='/play?index={orig_idx}'">
+                        <span>ℹ️ Ficha Técnica</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        """)
+        hero_dots_html.append(f'<div class="hero-dot {act_dot}" onclick="goToHeroSlide({s_idx})"></div>')
+        
+    hero_slides_str = "\n".join(hero_slides_html)
+    hero_dots_str = "\n".join(hero_dots_html)
+    
+    # 2. Preparar tarjetas para Slider Horizontal
+    slider_cards_html = []
+    if len(items_meta) >= 3:
+        for idx, it in enumerate(items_meta[:12]):
+            safe_title = html.escape(it.get('title', ''))
+            poster = it.get('poster_url')
+            poster_tag = f'<img src="{poster}" loading="lazy" class="slider-card-img" alt="{safe_title}">' if poster else '<div class="card-no-poster">🎬</div>'
+            year_badge = f'<span class="badge year">{it.get("year")}</span>' if it.get("year") else ''
+            rating_badge = f'<span class="badge rating">⭐ {it.get("rating")}</span>' if it.get("rating") else ''
+            slider_cards_html.append(f"""
+            <div class="slider-card" onclick="window.location.href='/play?index={idx}'">
+                <div class="poster-container">
+                    {poster_tag}
+                    <div class="badge-overlay">
+                        {rating_badge}
+                        {year_badge}
+                    </div>
+                    <div class="play-overlay">
+                        <div class="play-icon">▶</div>
+                    </div>
+                </div>
+                <div class="card-info">
+                    <h4 class="card-title" title="{safe_title}">{safe_title}</h4>
+                </div>
+            </div>
+            """)
+    slider_cards_str = "\n".join(slider_cards_html)
+    
+    # 3. Preparar tarjetas para Grid General
     cards_html = []
     for idx, it in enumerate(items_meta):
         safe_title = html.escape(it.get('title', ''))
@@ -817,15 +897,16 @@ def generate_catalog_html(folder_path, items_meta):
             min-height: 100vh;
             display: flex;
             flex-direction: column;
+            overflow-x: hidden;
         }}
         header {{
             position: sticky;
             top: 0;
-            z-index: 100;
-            background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(16px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 16px 28px;
+            z-index: 500;
+            background: rgba(9, 13, 22, 0.88);
+            backdrop-filter: blur(18px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 14px 28px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -866,7 +947,7 @@ def generate_catalog_html(folder_path, items_meta):
             background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(129, 140, 248, 0.2));
             color: #38bdf8;
             border: 1px solid rgba(56, 189, 248, 0.4);
-            padding: 10px 16px;
+            padding: 9px 16px;
             border-radius: 10px;
             font-weight: 700;
             font-size: 13px;
@@ -891,7 +972,7 @@ def generate_catalog_html(folder_path, items_meta):
             width: 100%;
             background: rgba(30, 41, 59, 0.8);
             border: 1px solid rgba(255, 255, 255, 0.15);
-            padding: 10px 16px 10px 38px;
+            padding: 9px 16px 9px 38px;
             border-radius: 10px;
             color: #fff;
             font-size: 14px;
@@ -915,7 +996,7 @@ def generate_catalog_html(folder_path, items_meta):
             background: rgba(239, 68, 68, 0.2);
             color: #ef4444;
             border: 1px solid rgba(239, 68, 68, 0.4);
-            padding: 10px 16px;
+            padding: 9px 16px;
             border-radius: 10px;
             font-weight: 700;
             font-size: 13px;
@@ -927,13 +1008,240 @@ def generate_catalog_html(folder_path, items_meta):
             background: #ef4444;
             color: #fff;
         }}
+
+        /* HERO BILLBOARD SECTION */
+        .hero-container {{
+            position: relative;
+            width: 100%;
+            height: 480px;
+            background: #090d16;
+            overflow: hidden;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }}
+        .hero-slide {{
+            position: absolute;
+            inset: 0;
+            background-size: cover;
+            background-position: center top;
+            opacity: 0;
+            transition: opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            padding: 0 50px;
+            pointer-events: none;
+        }}
+        .hero-slide.active {{
+            opacity: 1;
+            pointer-events: auto;
+        }}
+        .hero-content {{
+            max-width: 680px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            z-index: 2;
+        }}
+        .hero-badge-top {{
+            font-size: 12px;
+            font-weight: 800;
+            color: #38bdf8;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }}
+        .hero-title {{
+            font-size: 38px;
+            font-weight: 900;
+            color: #ffffff;
+            line-height: 1.15;
+            text-shadow: 0 4px 16px rgba(0,0,0,0.8);
+            letter-spacing: -0.5px;
+        }}
+        .hero-meta-row {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+        .hero-tag {{
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #cbd5e1;
+        }}
+        .hero-tag.rating {{ color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); }}
+        .hero-tag.year {{ color: #94a3b8; }}
+        .hero-desc {{
+            font-size: 14px;
+            line-height: 1.6;
+            color: #cbd5e1;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+        }}
+        .hero-actions {{
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-top: 6px;
+        }}
+        .hero-play-btn {{
+            background: linear-gradient(135deg, #38bdf8, #818cf8);
+            color: #0f172a;
+            border: none;
+            padding: 12px 26px;
+            border-radius: 10px;
+            font-weight: 800;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 20px rgba(56, 189, 248, 0.35);
+        }}
+        .hero-play-btn:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(56, 189, 248, 0.6);
+        }}
+        .hero-info-btn {{
+            background: rgba(255, 255, 255, 0.12);
+            color: #f8fafc;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 12px 22px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            transition: all 0.2s;
+        }}
+        .hero-info-btn:hover {{
+            background: rgba(255, 255, 255, 0.22);
+        }}
+        .hero-dots-container {{
+            position: absolute;
+            bottom: 24px;
+            right: 48px;
+            display: flex;
+            gap: 8px;
+            z-index: 10;
+        }}
+        .hero-dot {{
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.25);
+            cursor: pointer;
+            transition: all 0.25s;
+        }}
+        .hero-dot.active {{
+            background: #38bdf8;
+            width: 28px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+        }}
+
         main {{
             flex-grow: 1;
-            padding: 32px 28px;
+            padding: 36px 32px;
             max-width: 1600px;
             margin: 0 auto;
             width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 40px;
         }}
+
+        /* FEATURED CAROUSEL / SLIDER SECTION */
+        .section-header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }}
+        .section-title {{
+            font-size: 20px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: -0.3px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .slider-wrapper {{
+            position: relative;
+            width: 100%;
+        }}
+        .slider-track {{
+            display: flex;
+            gap: 20px;
+            overflow-x: auto;
+            scroll-snap-type: x mandatory;
+            scroll-behavior: smooth;
+            scrollbar-width: none;
+            padding: 8px 4px 16px 4px;
+        }}
+        .slider-track::-webkit-scrollbar {{
+            display: none;
+        }}
+        .slider-card {{
+            flex: 0 0 180px;
+            scroll-snap-align: start;
+            background: rgba(30, 41, 59, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s;
+            display: flex;
+            flex-direction: column;
+        }}
+        .slider-card:hover {{
+            transform: translateY(-6px);
+            border-color: rgba(56, 189, 248, 0.5);
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6), 0 0 15px rgba(56, 189, 248, 0.2);
+        }}
+        .slider-card-img {{
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }}
+        .slider-arrow {{
+            position: absolute;
+            top: 45%;
+            transform: translateY(-50%);
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #ffffff;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 20;
+            backdrop-filter: blur(12px);
+            transition: all 0.2s;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+        }}
+        .slider-arrow:hover {{
+            background: #38bdf8;
+            color: #0f172a;
+            border-color: #38bdf8;
+            transform: translateY(-50%) scale(1.1);
+        }}
+        .slider-arrow.prev {{ left: -20px; }}
+        .slider-arrow.next {{ right: -20px; }}
+
+        /* MAIN CATALOG GRID */
         .catalog-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
@@ -1010,7 +1318,7 @@ def generate_catalog_html(folder_path, items_meta):
             opacity: 0;
             transition: opacity 0.2s;
         }}
-        .media-card:hover .play-overlay {{
+        .media-card:hover .play-overlay, .slider-card:hover .play-overlay {{
             opacity: 1;
         }}
         .play-icon {{
@@ -1028,7 +1336,7 @@ def generate_catalog_html(folder_path, items_meta):
             transform: scale(0.8);
             transition: transform 0.2s;
         }}
-        .media-card:hover .play-icon {{
+        .media-card:hover .play-icon, .slider-card:hover .play-icon {{
             transform: scale(1);
         }}
         .card-info {{
@@ -1249,6 +1557,15 @@ def generate_catalog_html(folder_path, items_meta):
             font-size: 11px;
             color: #94a3b8;
         }}
+
+        @media (max-width: 768px) {{
+            .hero-container {{ height: 380px; }}
+            .hero-slide {{ padding: 0 24px; }}
+            .hero-title {{ font-size: 26px; }}
+            .hero-desc {{ -webkit-line-clamp: 2; font-size: 13px; }}
+            .hero-dots-container {{ right: 24px; bottom: 16px; }}
+            main {{ padding: 24px 16px; gap: 30px; }}
+        }}
     </style>
 </head>
 <body>
@@ -1322,19 +1639,98 @@ def generate_catalog_html(folder_path, items_meta):
             <button class="stop-btn" onclick="remoteShutdown()">🛑 Apagar</button>
         </div>
     </header>
+
+    <!-- HERO BILLBOARD SECTION -->
+    <section id="heroBanner" class="hero-container">
+        {hero_slides_str}
+        <div class="hero-dots-container">
+            {hero_dots_str}
+        </div>
+    </section>
+
     <main>
-        <div id="catalogGrid" class="catalog-grid">
-            {cards_str}
-        </div>
-        <div id="noResultsMsg" class="no-results" style="display:none;">
-            ❌ No se encontraron películas que coincidan con tu búsqueda.
-        </div>
+        <!-- FEATURED SLIDER SECTION (SI HAY 3 O MÁS TÍTULOS) -->
+        {f'''
+        <section id="featuredSection" class="featured-section">
+            <div class="section-header">
+                <div class="section-title">🔥 Recomendados de la Colección</div>
+            </div>
+            <div class="slider-wrapper">
+                <button class="slider-arrow prev" onclick="scrollSlider(-1)">❮</button>
+                <div id="featuredSliderTrack" class="slider-track">
+                    {slider_cards_str}
+                </div>
+                <button class="slider-arrow next" onclick="scrollSlider(1)">❯</button>
+            </div>
+        </section>
+        ''' if slider_cards_html else ''}
+
+        <!-- ALL TITLES GRID SECTION -->
+        <section class="all-titles-section">
+            <div class="section-header">
+                <div class="section-title">📂 Todos los Títulos ({total_items})</div>
+            </div>
+            <div id="catalogGrid" class="catalog-grid">
+                {cards_str}
+            </div>
+            <div id="noResultsMsg" class="no-results" style="display:none;">
+                ❌ No se encontraron títulos que coincidan con tu búsqueda.
+            </div>
+        </section>
     </main>
+
     <script>
         const initialSubfolders = {subfolders_json};
         let currentSubfolders = [...initialSubfolders];
         let queuedFiles = [];
         let isUploading = false;
+
+        // HERO ROTATION ENGINE
+        let currentHeroSlide = 0;
+        const totalHeroSlides = {len(hero_data)};
+        let heroInterval = null;
+
+        function goToHeroSlide(idx) {{
+            const slides = document.querySelectorAll('.hero-slide');
+            const dots = document.querySelectorAll('.hero-dot');
+            if (!slides.length) return;
+            
+            currentHeroSlide = (idx + totalHeroSlides) % totalHeroSlides;
+            
+            slides.forEach((s, i) => {{
+                s.classList.toggle('active', i === currentHeroSlide);
+            }});
+            dots.forEach((d, i) => {{
+                d.classList.toggle('active', i === currentHeroSlide);
+            }});
+        }}
+
+        function startHeroAutoplay() {{
+            if (totalHeroSlides <= 1) return;
+            stopHeroAutoplay();
+            heroInterval = setInterval(() => {{
+                goToHeroSlide(currentHeroSlide + 1);
+            }}, 7000);
+        }}
+
+        function stopHeroAutoplay() {{
+            if (heroInterval) clearInterval(heroInterval);
+        }}
+
+        const heroBanner = document.getElementById('heroBanner');
+        if (heroBanner) {{
+            heroBanner.addEventListener('mouseenter', stopHeroAutoplay);
+            heroBanner.addEventListener('mouseleave', startHeroAutoplay);
+            startHeroAutoplay();
+        }}
+
+        // SLIDER SCROLLING ENGINE
+        function scrollSlider(dir) {{
+            const track = document.getElementById('featuredSliderTrack');
+            if (!track) return;
+            const scrollDist = 200 * 3;
+            track.scrollBy({{ left: dir * scrollDist, behavior: 'smooth' }});
+        }}
 
         function normalizeClientStr(s) {{
             if (!s) return '';
@@ -1563,7 +1959,7 @@ def generate_catalog_html(folder_path, items_meta):
             `;
             grid.insertBefore(card, grid.firstChild);
             
-            const allCards = document.querySelectorAll('.media-card');
+            const allCards = document.querySelectorAll('#catalogGrid .media-card');
             const folderBadge = document.getElementById('folderBadge');
             if (folderBadge) {{
                 folderBadge.textContent = `📂 {html.escape(folder_name)} (${{allCards.length}} títulos)`;
@@ -1572,9 +1968,20 @@ def generate_catalog_html(folder_path, items_meta):
 
         function filterCatalog() {{
             const query = normalizeClientStr(document.getElementById('catalogSearch').value);
-            const cards = document.querySelectorAll('.media-card');
+            const cards = document.querySelectorAll('#catalogGrid .media-card');
+            const hero = document.getElementById('heroBanner');
+            const featured = document.getElementById('featuredSection');
             let visibleCount = 0;
             
+            // Si el usuario escribe una búsqueda, ocultar Hero y Slider para concentrarse en los resultados
+            if (query) {{
+                if (hero) hero.style.display = 'none';
+                if (featured) featured.style.display = 'none';
+            }} else {{
+                if (hero) hero.style.display = 'flex';
+                if (featured) featured.style.display = 'block';
+            }}
+
             cards.forEach(card => {{
                 const data = normalizeClientStr(card.getAttribute('data-title') || '');
                 if (!query || data.includes(query)) {{
