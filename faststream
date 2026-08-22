@@ -1839,16 +1839,25 @@ def get_or_create_audio_remux(video_path, stream_id):
         if os.path.exists(out_file) and os.path.getsize(out_file) > 1024:
             return out_file
             
-        tmp_out = out_file + ".tmp"
+        # Verificar si la pista de audio ya es AAC nativa para copia ultrarrápida
+        is_aac = False
+        try:
+            p_cmd = ["ffprobe", "-v", "error", "-select_streams", f"0:{stream_id}", "-show_entries", "stream=codec_name", "-of", "csv=p=0", video_path]
+            c_res = subprocess.run(p_cmd, capture_output=True, text=True, timeout=3)
+            if c_res.stdout.strip().lower() in ('aac', 'mp4a'):
+                is_aac = True
+        except Exception:
+            pass
+
+        audio_args = ["-c:a", "copy"] if is_aac else ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+
         cmd = [
             "ffmpeg", "-y", "-v", "error",
             "-i", video_path,
             "-map", "0:v:0",
             "-map", f"0:{stream_id}",
             "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ac", "2",
+            *audio_args,
             "-movflags", "+faststart",
             "-f", "mp4",
             tmp_out
