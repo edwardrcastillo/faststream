@@ -2174,17 +2174,13 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
 
     # Subtitle Tracks & Options
     subs = meta.get("subtitle_tracks", [])
-    tracks_html_list = []
     sub_options = []
     for s_idx, s in enumerate(subs):
         s_label = html.escape(s.get("title", f"Sub {s_idx+1}"))
-        s_lang = html.escape(s.get("language", "es"))
-        s_src = f"/subtitles?index={current_idx}&stream_id={s.get('stream_id')}"
-        is_def = 'default' if (s.get("is_default") or s.get("forced")) else ''
-        tracks_html_list.append(f'<track id="sub_track_{s_idx}" label="{s_label}" kind="subtitles" srclang="{s_lang}" src="{s_src}" {is_def}>')
-        sub_options.append(f'<option value="{s_idx}">{s_label}</option>')
+        s_val = s.get("stream_id")
+        is_def = 'selected' if (s.get("is_default") or s.get("forced")) else ''
+        sub_options.append(f'<option value="{s_val}" {is_def}>💬 {s_label}</option>')
         
-    tracks_html = "\n                ".join(tracks_html_list)
     sub_options_html = "\n                            ".join(sub_options)
     
     # Audio Tracks & Options
@@ -2990,33 +2986,36 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
 
         function parseWebVTT(vttText) {{
             const cues = [];
-            const lines = vttText.split(/\\r?\\n/);
-            let i = 0;
-            while (i < lines.length) {{
-                const line = lines[i].trim();
-                if (line.includes('-->')) {{
-                    const parts = line.split('-->');
-                    const start = parseTimestamp(parts[0].trim());
-                    const end = parseTimestamp(parts[1].trim().split(' ')[0]);
-                    let text = '';
-                    i++;
-                    while (i < lines.length && lines[i].trim() !== '') {{
-                        text += (text ? '<br>' : '') + lines[i].trim();
-                        i++;
+            if (!vttText) return cues;
+            const blocks = vttText.replace(/\\r\\n/g, '\\n').split(/\\n\\s*\\n/);
+            for (const b of blocks) {{
+                const lines = b.trim().split('\\n');
+                for (let i = 0; i < lines.length; i++) {{
+                    const line = lines[i].trim();
+                    if (line.includes('-->')) {{
+                        const parts = line.split('-->');
+                        const start = parseTimestamp(parts[0].trim());
+                        const end = parseTimestamp(parts[1].trim().split(' ')[0].trim());
+                        const textLines = lines.slice(i + 1).map(l => l.trim()).filter(Boolean);
+                        const text = textLines.join('<br>');
+                        if (start >= 0 && end > start && text) {{
+                            cues.push({{ start, end, text }});
+                        }}
+                        break;
                     }}
-                    if (start >= 0 && end >= 0) cues.push({{ start, end, text }});
                 }}
-                i++;
             }}
             return cues;
         }}
 
         function parseTimestamp(tStr) {{
-            const parts = tStr.split(':');
+            if (!tStr) return 0;
+            const clean = tStr.trim().replace(',', '.');
+            const parts = clean.split(':');
             if (parts.length === 3) {{
-                return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2].replace(',', '.'));
+                return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
             }} else if (parts.length === 2) {{
-                return parseFloat(parts[0]) * 60 + parseFloat(parts[1].replace(',', '.'));
+                return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
             }}
             return 0;
         }}
@@ -3213,6 +3212,11 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
                     toggleFullscreen();
                 }}
             }});
+
+            const subSelect = document.getElementById('subTrackSelect');
+            if (subSelect && subSelect.value && subSelect.value !== "-1") {{
+                switchSubtitleTrack(subSelect.value);
+            }}
 
             video.play().catch(()=>{{}});
         }});
