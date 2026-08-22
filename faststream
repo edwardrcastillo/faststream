@@ -2930,7 +2930,7 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     stream_url = f"http://{lan_ip}:{final_port}/"
     
     print("\n" + "="*70)
-    print(f"⚡ FASTSTREAM v2.1.0 - MULTI-AUDIO, SUBTITLES & JELLYFIN HUB")
+    print(f"⚡ FASTSTREAM v2.2.0 - MULTI-AUDIO, SUBTITLES & JELLYFIN HUB")
     print("="*70)
     if is_dir:
         print(f"📁 Modo:     Catálogo de Carpeta ({len(file_list)} videos)")
@@ -2949,23 +2949,319 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
         with ThreadingSilentTCPServer(("0.0.0.0", final_port), FastStreamHandler) as httpd:
             httpd.serve_forever()
     except KeyboardInterrupt:
-        try:
-            os.system("stty echo icanon 2>/dev/null")
-        except Exception:
-            pass
+        if sys.platform != "win32":
+            try:
+                os.system("stty echo icanon 2>/dev/null")
+            except Exception:
+                pass
         print("\n🛑 Servidor FastStream detenido correctamente.\n")
         sys.exit(0)
 
+def install_context_menu():
+    print("\n⚙️ Configurando integración en el menú contextual del explorador...")
+    system = sys.platform
+    
+    if system == "darwin":
+        services_dir = os.path.expanduser("~/Library/Services")
+        workflow_dir = os.path.join(services_dir, "⚡ Transmitir con FastStream.workflow")
+        contents_dir = os.path.join(workflow_dir, "Contents")
+        os.makedirs(contents_dir, exist_ok=True)
+        
+        info_plist = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>⚡ Transmitir con FastStream</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>runWorkflowAsService</string>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSTextContent</key>
+                <string>FilePath</string>
+            </dict>
+            <key>NSSendFileTypes</key>
+            <array>
+                <string>public.item</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>"""
+        
+        wflow_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>AMApplicationBuild</key>
+    <string>521.1</string>
+    <key>AMApplicationVersion</key>
+    <string>2.10</string>
+    <key>AMDocumentVersion</key>
+    <string>2</string>
+    <key>actions</key>
+    <array>
+        <dict>
+            <key>action</key>
+            <dict>
+                <key>AMAccepts</key>
+                <dict>
+                    <key>Container</key>
+                    <string>List</string>
+                    <key>Optional</key>
+                    <true/>
+                    <key>Types</key>
+                    <array>
+                        <string>com.apple.cocoa.path</string>
+                    </array>
+                </dict>
+                <key>AMActionVersion</key>
+                <string>2.0.3</string>
+                <key>AMParameterProperties</key>
+                <dict>
+                    <key>COMMAND_STRING</key>
+                    <dict/>
+                </dict>
+                <key>AMProvides</key>
+                <dict>
+                    <key>Container</key>
+                    <string>List</string>
+                    <key>Types</key>
+                    <array>
+                        <string>com.apple.cocoa.path</string>
+                    </array>
+                </dict>
+                <key>ActionBundlePath</key>
+                <string>/System/Library/Automator/Run Shell Script.action</string>
+                <key>ActionName</key>
+                <string>Run Shell Script</string>
+                <key>ActionParameters</key>
+                <dict>
+                    <key>COMMAND_STRING</key>
+                    <string>for f in "$@"
+do
+    osascript -e 'tell application "Terminal" to do script "export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream \\"" &amp; "'"$f"'" &amp; "\\""'
+done</string>
+                    <key>CheckedForUserDefaultShell</key>
+                    <true/>
+                    <key>inputMethod</key>
+                    <integer>1</integer>
+                    <key>shell</key>
+                    <string>/bin/zsh</string>
+                    <key>source</key>
+                    <string></string>
+                </dict>
+                <key>BundleIdentifier</key>
+                <string>com.apple.RunShellScript</string>
+                <key>CFBundleVersion</key>
+                <string>2.0.3</string>
+            </dict>
+        </dict>
+    </array>
+    <key>workflowMetaData</key>
+    <dict>
+        <key>workflowTypeIdentifier</key>
+        <string>com.apple.Automator.servicesMenu</string>
+        <key>serviceInputTypeIdentifier</key>
+        <string>com.apple.Automator.fileSystemObject</string>
+        <key>serviceOutputTypeIdentifier</key>
+        <string>com.apple.Automator.nothing</string>
+        <key>serviceProcessesInput</key>
+        <integer>0</integer>
+    </dict>
+</dict>
+</plist>"""
+        
+        with open(os.path.join(contents_dir, "Info.plist"), "w", encoding="utf-8") as f:
+            f.write(info_plist)
+        with open(os.path.join(contents_dir, "document.wflow"), "w", encoding="utf-8") as f:
+            f.write(wflow_xml)
+            
+        try:
+            subprocess.run(["/System/Library/CoreServices/pbs", "-flush"], capture_output=True)
+        except Exception:
+            pass
+            
+        print("✅ [macOS Finder] Servicio '⚡ Transmitir con FastStream' instalado con éxito!")
+        print("💡 Clic derecho en cualquier video o carpeta en Finder -> 'Acciones Rápidas' o 'Servicios' -> '⚡ Transmitir con FastStream'.\n")
+        
+    elif system.startswith("linux"):
+        installed_any = False
+        
+        # 1. GNOME / Nautilus / Nemo Scripts
+        nautilus_dirs = [
+            os.path.expanduser("~/.local/share/nautilus/scripts"),
+            os.path.expanduser("~/.local/share/nemo/scripts")
+        ]
+        nautilus_script = """#!/usr/bin/env bash
+# FastStream Nautilus Context Script
+TARGET="${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-$NEMO_SCRIPT_SELECTED_FILE_PATHS}"
+if [ -z "$TARGET" ]; then
+    TARGET="$1"
+fi
+FIRST_TARGET=$(echo "$TARGET" | head -n 1)
+
+if [ -z "$FIRST_TARGET" ]; then
+    exit 0
+fi
+
+if command -v gnome-terminal >/dev/null 2>&1; then
+    gnome-terminal -- bash -c "export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream \\"$FIRST_TARGET\\"; exec bash"
+elif command -v x-terminal-emulator >/dev/null 2>&1; then
+    x-terminal-emulator -e "bash -c 'export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream \\"$FIRST_TARGET\\"; exec bash'"
+elif command -v konsole >/dev/null 2>&1; then
+    konsole -e "bash -c 'export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream \\"$FIRST_TARGET\\"; exec bash'"
+elif command -v xfce4-terminal >/dev/null 2>&1; then
+    xfce4-terminal -e "bash -c 'export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream \\"$FIRST_TARGET\\"; exec bash'"
+elif command -v alacritty >/dev/null 2>&1; then
+    alacritty -e bash -c "export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream \\"$FIRST_TARGET\\"; exec bash"
+elif command -v kitty >/dev/null 2>&1; then
+    kitty bash -c "export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream \\"$FIRST_TARGET\\"; exec bash"
+else
+    faststream "$FIRST_TARGET" &
+fi
+"""
+        for nd in nautilus_dirs:
+            try:
+                os.makedirs(nd, exist_ok=True)
+                script_path = os.path.join(nd, "⚡ Transmitir con FastStream")
+                with open(script_path, "w", encoding="utf-8") as f:
+                    f.write(nautilus_script)
+                os.chmod(script_path, 0o755)
+                installed_any = True
+                print(f"✅ [GNOME / Nautilus] Script instalado en: {script_path}")
+            except Exception:
+                pass
+
+        # 2. KDE Dolphin ServiceMenus
+        kde_dirs = [
+            os.path.expanduser("~/.local/share/kservices5/ServiceMenus"),
+            os.path.expanduser("~/.local/share/kio/servicemenus")
+        ]
+        kde_desktop = """[Desktop Entry]
+Type=Service
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/*;inode/directory;
+Actions=faststream_stream;
+
+[Desktop Action faststream_stream]
+Name=⚡ Transmitir con FastStream
+Icon=video-x-generic
+Exec=konsole -e bash -c "export PATH=$PATH:/usr/local/bin:~/.local/bin; faststream '%f'; exec bash"
+"""
+        for kd in kde_dirs:
+            try:
+                os.makedirs(kd, exist_ok=True)
+                desktop_path = os.path.join(kd, "faststream.desktop")
+                with open(desktop_path, "w", encoding="utf-8") as f:
+                    f.write(kde_desktop)
+                installed_any = True
+                print(f"✅ [KDE Dolphin] Menú de servicio instalado en: {desktop_path}")
+            except Exception:
+                pass
+
+        if installed_any:
+            print("💡 Clic derecho en cualquier video o carpeta en tu explorador -> 'Scripts' o Menú -> '⚡ Transmitir con FastStream'.\n")
+        else:
+            print("⚠️ No se pudieron crear los directorios de scripts de explorador.\n")
+            
+    elif system == "win32":
+        try:
+            import winreg
+            cmd_file = f'cmd.exe /k faststream "%1"'
+            cmd_dir = f'cmd.exe /k faststream "%V"'
+            
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\*\shell\FastStream") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "⚡ Transmitir con FastStream")
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, "imageres.dll,190")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\*\shell\FastStream\command") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, cmd_file)
+                
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\Directory\shell\FastStream") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "⚡ Transmitir con FastStream")
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, "imageres.dll,190")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\Directory\shell\FastStream\command") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, cmd_dir)
+                
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\Directory\Background\shell\FastStream") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "⚡ Transmitir con FastStream")
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, "imageres.dll,190")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\Directory\Background\shell\FastStream\command") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, cmd_dir)
+                
+            print("✅ [Windows Explorer] Menú contextual '⚡ Transmitir con FastStream' instalado con éxito!\n")
+        except Exception as e:
+            print(f"❌ Error al registrar menú contextual en Windows: {e}\n")
+
+def remove_context_menu():
+    print("\n🗑️ Desinstalando integración del menú contextual...")
+    system = sys.platform
+    if system == "darwin":
+        workflow_dir = os.path.expanduser("~/Library/Services/⚡ Transmitir con FastStream.workflow")
+        if os.path.exists(workflow_dir):
+            shutil.rmtree(workflow_dir, ignore_errors=True)
+            print("✅ [macOS Finder] Servicio eliminado correctamente.\n")
+        else:
+            print("ℹ️ No se encontró el servicio en ~/Library/Services.\n")
+    elif system.startswith("linux"):
+        for p in [
+            os.path.expanduser("~/.local/share/nautilus/scripts/⚡ Transmitir con FastStream"),
+            os.path.expanduser("~/.local/share/nemo/scripts/⚡ Transmitir con FastStream"),
+            os.path.expanduser("~/.local/share/kservices5/ServiceMenus/faststream.desktop"),
+            os.path.expanduser("~/.local/share/kio/servicemenus/faststream.desktop")
+        ]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                    print(f"✅ Eliminado: {p}")
+                except Exception:
+                    pass
+        print("✅ [Linux] Scripts de menú contextual eliminados correctamente.\n")
+    elif system == "win32":
+        try:
+            import winreg
+            for rk in [
+                r"Software\Classes\*\shell\FastStream\command",
+                r"Software\Classes\*\shell\FastStream",
+                r"Software\Classes\Directory\shell\FastStream\command",
+                r"Software\Classes\Directory\shell\FastStream",
+                r"Software\Classes\Directory\Background\shell\FastStream\command",
+                r"Software\Classes\Directory\Background\shell\FastStream"
+            ]:
+                try:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, rk)
+                except Exception:
+                    pass
+            print("✅ [Windows Explorer] Claves de menú contextual eliminadas correctamente.\n")
+        except Exception as e:
+            print(f"❌ Error al eliminar claves en Windows: {e}\n")
+
 def main():
-    parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante con selector de audio y subtítulos.")
+    parser = argparse.ArgumentParser(description="⚡ FastStream - Transmite cualquier video o carpeta por HTTP al instante con selector de audio, subtítulos y menú contextual.")
     parser.add_argument("target", nargs="?", help="Ruta al archivo de video o carpeta a transmitir.")
     parser.add_argument("-p", "--port", type=int, default=None, help="Puerto HTTP específico (por defecto: 8090 o el siguiente puerto libre).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Mostrar logs detallados de todas las peticiones HTTP.")
     parser.add_argument("--tmdb-key", help="Clave de API de TheMovieDB a usar.")
     parser.add_argument("--set-tmdb-key", help="Guardar tu clave de API de TMDB en ~/.config/faststream/config.json permanentemente.")
+    parser.add_argument("--install-menu", "--install-context-menu", dest="install_menu", action="store_true", help="Instalar '⚡ Transmitir con FastStream' en el menú contextual (clic derecho) de macOS Finder, Linux Nautilus/Dolphin o Windows Explorer.")
+    parser.add_argument("--remove-menu", "--remove-context-menu", dest="remove_menu", action="store_true", help="Desinstalar la opción de FastStream del menú contextual del explorador de archivos.")
     parser.add_argument("--update", action="store_true", help="Actualizar FastStream a la versión más reciente del repositorio.")
     args = parser.parse_args()
     
+    if args.install_menu:
+        install_context_menu()
+        sys.exit(0)
+
+    if args.remove_menu:
+        remove_context_menu()
+        sys.exit(0)
+
     if args.update:
         candidate_paths = [
             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "update_faststream.sh"),
