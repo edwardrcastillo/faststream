@@ -1558,13 +1558,154 @@ def generate_catalog_html(folder_path, items_meta):
             color: #94a3b8;
         }}
 
+        @media (max-width: 900px) {{
+            .catalog-grid {{
+                grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+                gap: 16px;
+            }}
+            .slider-card {{
+                flex: 0 0 150px;
+            }}
+        }}
+
         @media (max-width: 768px) {{
-            .hero-container {{ height: 380px; }}
-            .hero-slide {{ padding: 0 24px; }}
-            .hero-title {{ font-size: 26px; }}
-            .hero-desc {{ -webkit-line-clamp: 2; font-size: 13px; }}
-            .hero-dots-container {{ right: 24px; bottom: 16px; }}
-            main {{ padding: 24px 16px; gap: 30px; }}
+            header {{
+                padding: 12px 14px;
+                gap: 10px;
+            }}
+            .brand {{
+                width: 100%;
+                justify-content: space-between;
+            }}
+            .brand h1 {{
+                font-size: 19px;
+            }}
+            .folder-badge {{
+                font-size: 11.5px;
+                padding: 3px 8px;
+            }}
+            .header-actions {{
+                width: 100%;
+                max-width: 100%;
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+            }}
+            .search-box {{
+                grid-column: 1 / -1;
+                max-width: 100%;
+                width: 100%;
+            }}
+            .search-input {{
+                padding: 11px 14px 11px 36px;
+                font-size: 14px;
+            }}
+            .upload-btn, .stop-btn {{
+                justify-content: center;
+                padding: 10px 8px;
+                font-size: 13px;
+                min-height: 42px;
+            }}
+            .hero-container {{
+                height: 380px;
+            }}
+            .hero-slide {{
+                padding: 0 18px 24px 18px;
+                align-items: flex-end;
+            }}
+            .hero-content {{
+                gap: 8px;
+            }}
+            .hero-title {{
+                font-size: 22px;
+                line-height: 1.2;
+            }}
+            .hero-desc {{
+                -webkit-line-clamp: 2;
+                font-size: 12.5px;
+                line-height: 1.45;
+            }}
+            .hero-actions {{
+                width: 100%;
+                gap: 8px;
+                margin-top: 4px;
+            }}
+            .hero-play-btn, .hero-info-btn {{
+                flex: 1;
+                justify-content: center;
+                padding: 10px 10px;
+                font-size: 13.5px;
+                min-height: 42px;
+            }}
+            .hero-dots-container {{
+                top: 14px;
+                right: 16px;
+                bottom: auto;
+            }}
+            .slider-arrow {{
+                display: none;
+            }}
+            .slider-track {{
+                gap: 12px;
+                padding: 4px 2px 12px 2px;
+            }}
+            .slider-card {{
+                flex: 0 0 135px;
+                border-radius: 10px;
+            }}
+            main {{
+                padding: 20px 12px;
+                gap: 26px;
+            }}
+            .section-title {{
+                font-size: 17px;
+            }}
+            .catalog-grid {{
+                grid-template-columns: repeat(2, 1fr);
+                gap: 12px;
+            }}
+            .card-info {{
+                padding: 8px 10px;
+                gap: 3px;
+            }}
+            .card-title {{
+                font-size: 12.5px;
+            }}
+            .card-meta {{
+                font-size: 11px;
+            }}
+            .play-icon {{
+                width: 44px;
+                height: 44px;
+                font-size: 17px;
+            }}
+            .upload-progress-card {{
+                left: 12px;
+                right: 12px;
+                bottom: 12px;
+                width: auto;
+                max-width: calc(100vw - 24px);
+                padding: 14px 16px;
+            }}
+            .modal-card {{
+                padding: 18px 14px;
+                max-width: 96vw;
+            }}
+            .dropzone-box {{
+                padding: 30px 20px;
+                margin: 16px;
+            }}
+            .dropzone-title {{
+                font-size: 18px;
+            }}
+        }}
+
+        @media (max-width: 380px) {{
+            .hero-title {{ font-size: 19px; }}
+            .catalog-grid {{
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
+            }}
         }}
     </style>
 </head>
@@ -2444,6 +2585,135 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
         .apply-btn:hover {{
             background: #059669;
             color: #fff;
+        }}
+
+        @media (max-width: 768px) {{
+            body {{
+                padding: 10px 8px 30px 8px;
+            }}
+            .nav-bar {{
+                margin-bottom: 10px;
+            }}
+            .nav-btn {{
+                padding: 10px 14px;
+                font-size: 13.5px;
+                min-height: 42px;
+            }}
+            .main-card {{
+                border-radius: 14px;
+            }}
+            .player-wrapper {{
+                max-height: 55vh;
+            }}
+            .tracks-bar {{
+                padding: 12px 14px;
+                gap: 10px;
+                flex-direction: column;
+                align-items: stretch;
+            }}
+            .track-picker-group {{
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+                width: 100%;
+            }}
+            .track-select {{
+                width: 100%;
+                min-height: 44px;
+                font-size: 14px;
+                padding: 9px 12px;
+            }}
+            .info-section {{
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                padding: 18px 14px;
+                gap: 16px;
+            }}
+            .poster-box {{
+                width: 130px;
+                margin: 0 auto;
+            }}
+            .details {{
+                width: 100%;
+                align-items: center;
+            }}
+            .title-row {{
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                width: 100%;
+                gap: 8px;
+            }}
+            .title-left {{
+                flex-direction: column;
+                align-items: center;
+                gap: 6px;
+                text-align: center;
+            }}
+            h1 {{
+                font-size: 20px;
+                line-height: 1.25;
+            }}
+            .badges-row {{
+                justify-content: center;
+                gap: 6px;
+            }}
+            .actions-right {{
+                width: 100%;
+                justify-content: center;
+                gap: 8px;
+                flex-wrap: wrap;
+                margin-top: 4px;
+            }}
+            .edit-meta-btn, .stop-btn {{
+                flex: 1 1 auto;
+                min-height: 42px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }}
+            .synopsis {{
+                font-size: 13.5px;
+                text-align: left;
+                line-height: 1.5;
+            }}
+            .file-info {{
+                font-size: 11px;
+                text-align: center;
+            }}
+            .modal-card {{
+                padding: 18px 14px;
+                max-width: 96vw;
+                gap: 14px;
+            }}
+            .search-box {{
+                flex-direction: column;
+                gap: 8px;
+            }}
+            .search-btn {{
+                width: 100%;
+                min-height: 44px;
+            }}
+            .result-item {{
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                gap: 10px;
+                padding: 12px;
+            }}
+            .result-poster {{
+                width: 70px;
+                height: 105px;
+            }}
+            .title-chips {{
+                justify-content: center;
+            }}
+            .apply-btn {{
+                width: 100%;
+                min-height: 44px;
+                margin-top: 6px;
+            }}
         }}
     </style>
 </head>
