@@ -108,7 +108,7 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 | **Apagado Remoto desde Web** | ✅ **1-Click (`🛑 Apagar Servidor`)** | ❌ Solo `Ctrl+C` en consola | ❌ Solo `Ctrl+C` en consola |
 | **Multi-Instancia Automática** | ✅ **Auto-Port Hunting (8090, 8091...)** | ❌ Falla con `Port in use` | ❌ Falla con `Port in use` |
 | **Código QR en Consola** | ✅ **Nativo en Python Puro** | ✅ Requiere flag | ❌ No |
-| **Peso del Ejecutable** | **~96 KB** (98 KB / 2,346 líneas en 1 solo archivo) | Binario (~15 MB) | Binario (~6 MB) |
+| **Peso del Ejecutable** | **~124 KB** (127 KB / 3,002 líneas en 1 solo archivo) | Binario (~15 MB) | Binario (~6 MB) |
 | **Propósito Principal** | **Streaming Multimedia, Auditoría y Renombrado** | **Compartir archivos y subidas** | **Servidor de archivos / WebDAV** |
 | **Reproductor de Video** | 🎬 **Cinematográfico (Glassmorphism + Tracks)** | 📄 Básico del navegador (`<video>` plano) | 📄 Básico del navegador (`<video>` plano) |
 | **Metadatos y Carátulas TMDB/IMDb** | ✅ **Automático + Buscador en vivo** | ❌ Inexistente | ❌ Inexistente |
@@ -131,6 +131,7 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 - [x] Asignación inteligente de puertos libres (*Auto-Port Hunting*).
 - [x] Generador de códigos QR nativo en terminal en Python puro.
 - [x] Apagado y liberación de puerto remota desde el navegador web.
+- [x] Subida de archivos por **Drag & Drop** en streaming de 64 KB con creación de subcarpetas y progreso en vivo.
 - [x] Actualizador automático integrado en CLI (`--update`) y script `update.sh`.
 - [ ] Transcodificación por hardware al vuelo (VideoToolbox / NVENC / VAAPI) para códecs antiguos no soportados en navegadores.
 - [ ] Modo batch CLI (`faststream --batch-rename /carpeta/`) para renombrado masivo asistido.
