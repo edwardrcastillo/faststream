@@ -31,7 +31,7 @@ Features:
 - Configurable TMDB API Key (CLI flag, ENV var, or ~/.config/faststream/config.json)
 """
 
-import sys, os, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re, struct, threading, time, html, unicodedata
+import sys, os, socket, http.server, socketserver, argparse, urllib.parse, urllib.request, json, subprocess, re, struct, threading, time, html, unicodedata, tempfile, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 CONFIG_DIR = os.path.expanduser("~/.config/faststream")
@@ -596,7 +596,24 @@ def get_file_metadata(file_path, api_key=None):
                 disp = st.get('disposition') or {}
                 
                 lang = (stags.get('language') or 'und').lower()
-                title_tag = stags.get('title') or stags.get('name') or ''
+                handler = (stags.get('handler_name') or '').strip()
+                if handler.lower() in ('videohandler', 'soundhandler', 'subtitlehandler', 'null', 'handler', 'mediahandler'):
+                    handler = ''
+                title_tag = (stags.get('title') or stags.get('name') or handler or '').strip()
+                
+                # Infer language if und
+                if lang in ('und', ''):
+                    h_low = (handler + " " + title_tag).lower()
+                    if any(k in h_low for k in ('español', 'espanol', 'spanish', 'latino', 'spa', 'castellano')):
+                        lang = 'spa'
+                    elif any(k in h_low for k in ('japones', 'japonés', 'japanese', 'jpn', 'nihongo')):
+                        lang = 'jpn'
+                    elif any(k in h_low for k in ('ingles', 'inglés', 'english', 'eng')):
+                        lang = 'eng'
+                    elif any(k in h_low for k in ('frances', 'francés', 'french', 'fra')):
+                        lang = 'fra'
+                    elif any(k in h_low for k in ('aleman', 'alemán', 'german', 'deu', 'ger')):
+                        lang = 'deu'
                 
                 if stype == 'video':
                     if st.get('width'):
@@ -611,7 +628,7 @@ def get_file_metadata(file_path, api_key=None):
                     if not audio_str or audio_str == "Estéreo":
                         audio_str = ch_str
                         
-                    if title_tag:
+                    if title_tag and title_tag.lower() not in ('stereo', 'estereo', 'surround', '5.1', '2.0'):
                         human_title = title_tag
                     elif lang in ('spa', 'es', 'es-mx', 'es-es', 'es-419'):
                         human_title = "Español (Latino)" if "lat" in title_tag.lower() else "Español"
@@ -643,7 +660,7 @@ def get_file_metadata(file_path, api_key=None):
                     
                 elif stype == 'subtitle':
                     is_forced = disp.get('forced', 0) == 1 or 'forced' in title_tag.lower() or 'forzado' in title_tag.lower()
-                    if title_tag:
+                    if title_tag and title_tag.lower() not in ('sub', 'subtitles', 'subtitulo', 'subtítulos'):
                         human_sub = title_tag
                     elif lang in ('spa', 'es', 'es-mx', 'es-es', 'es-419'):
                         human_sub = "Español (Forzado)" if is_forced else "Español (Completo)"
@@ -1611,17 +1628,42 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
             if (!video) return;
             const curTime = video.currentTime;
             const isPaused = video.paused;
+            const subSelect = document.getElementById('subTrackSelect');
+            const chosenSubIdx = subSelect ? parseInt(subSelect.value) : -1;
+            
+            let toast = document.getElementById('faststreamToast');
+            if (!toast) {{
+                toast = document.createElement('div');
+                toast.id = 'faststreamToast';
+                toast.style.cssText = 'position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.92); border:1px solid #38bdf8; color:#38bdf8; padding:10px 20px; border-radius:10px; font-size:14px; font-weight:600; z-index:9999; backdrop-filter:blur(8px); box-shadow:0 10px 25px rgba(0,0,0,0.5); display:none;';
+                document.body.appendChild(toast);
+            }}
+            
             const baseUrl = `/video?index={current_idx}`;
-            const newSrc = streamId !== "" ? `${{baseUrl}}&audio=${{streamId}}` : baseUrl;
+            const newSrc = (streamId !== "" && streamId !== undefined) ? `${{baseUrl}}&audio=${{streamId}}` : baseUrl;
+            
+            if (streamId !== "") {{
+                toast.innerHTML = "⏳ Preparando pista de audio y sincronizando...";
+                toast.style.display = "block";
+            }}
             
             const srcElem = document.getElementById('videoSource');
             if (srcElem) srcElem.src = newSrc;
             video.src = newSrc;
             
             video.addEventListener('loadedmetadata', function() {{
+                if (toast) toast.style.display = "none";
                 video.currentTime = curTime;
+                
+                // Restaurar subtítulo activo
+                if (chosenSubIdx >= 0 && video.textTracks) {{
+                    for (let i = 0; i < video.textTracks.length; i++) {{
+                        video.textTracks[i].mode = (i === chosenSubIdx) ? 'showing' : 'disabled';
+                    }}
+                }}
                 if (!isPaused) video.play().catch(()=>{{}});
             }}, {{ once: true }});
+            
             video.load();
         }}
 
@@ -1777,6 +1819,49 @@ def generate_player_html(file_path, meta, is_dir=False, file_list=None, current_
     </script>
 </body>
 </html>"""
+
+REMUX_CACHE_DIR = os.path.join(tempfile.gettempdir(), "faststream_remux_cache")
+REMUX_LOCK = threading.Lock()
+
+def get_or_create_audio_remux(video_path, stream_id):
+    os.makedirs(REMUX_CACHE_DIR, exist_ok=True)
+    try:
+        f_stat = os.stat(video_path)
+        key_str = f"{video_path}_{f_stat.st_mtime}_{f_stat.st_size}_{stream_id}"
+    except Exception:
+        key_str = f"{video_path}_{stream_id}"
+    cache_hash = hashlib.md5(key_str.encode('utf-8')).hexdigest()[:12]
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    clean_base = re.sub(r'[^\w\-]', '_', base_name)[:30]
+    out_file = os.path.join(REMUX_CACHE_DIR, f"{clean_base}_a{stream_id}_{cache_hash}.mp4")
+    
+    with REMUX_LOCK:
+        if os.path.exists(out_file) and os.path.getsize(out_file) > 1024:
+            return out_file
+            
+        tmp_out = out_file + ".tmp"
+        cmd = [
+            "ffmpeg", "-y", "-v", "error",
+            "-i", video_path,
+            "-map", "0:v:0",
+            "-map", f"0:{stream_id}",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            tmp_out
+        ]
+        try:
+            subprocess.run(cmd, check=True)
+            os.replace(tmp_out, out_file)
+            return out_file
+        except Exception as e:
+            if os.path.exists(tmp_out):
+                try: os.remove(tmp_out)
+                except Exception: pass
+            raise e
 
 def run_faststream(target, requested_port=None, api_key=None, verbose=False):
     abs_target = os.path.abspath(target)
@@ -1957,37 +2042,14 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 else:
                     video_target = current_file
 
-                # Selección dinámica de pista de audio
+                # Selección dinámica de pista de audio con remux rápido y soporte completo de Byte-Range RFC 7233
                 audio_req = query.get("audio", [None])[0]
                 if audio_req is not None and audio_req != "":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "video/mp4")
-                    self.send_header("Accept-Ranges", "none")
-                    self.end_headers()
                     try:
-                        cmd = [
-                            "ffmpeg", "-v", "error",
-                            "-i", video_target,
-                            "-map", "0:v:0",
-                            "-map", f"0:{audio_req}",
-                            "-c:v", "copy",
-                            "-c:a", "aac",
-                            "-b:a", "192k",
-                            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-                            "-f", "mp4", "pipe:1"
-                        ]
-                        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        while True:
-                            chunk = proc.stdout.read(64 * 1024)
-                            if not chunk: break
-                            self.wfile.write(chunk)
-                        proc.stdout.close()
-                        proc.wait()
-                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                        pass
-                    except Exception:
-                        pass
-                    return
+                        video_target = get_or_create_audio_remux(video_target, audio_req)
+                    except Exception as e:
+                        self.send_error(500, f"Error preparando pista de audio: {e}")
+                        return
 
                 try:
                     file_size = os.path.getsize(video_target)
@@ -2060,7 +2122,11 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
                 self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
                 def kill_server():
                     time.sleep(0.3)
-                    print("\n🛑 Apagado remoto solicitado desde el navegador. Servidor detenido.")
+                    try:
+                        os.system("stty echo icanon 2>/dev/null")
+                    except Exception:
+                        pass
+                    print("\n🛑 Apagado remoto solicitado desde el navegador. Servidor detenido.\n")
                     os._exit(0)
                 threading.Thread(target=kill_server).start()
                 return
@@ -2165,7 +2231,11 @@ def run_faststream(target, requested_port=None, api_key=None, verbose=False):
         with ThreadingSilentTCPServer(("0.0.0.0", final_port), FastStreamHandler) as httpd:
             httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n🛑 Servidor FastStream detenido correctamente.")
+        try:
+            os.system("stty echo icanon 2>/dev/null")
+        except Exception:
+            pass
+        print("\n🛑 Servidor FastStream detenido correctamente.\n")
         sys.exit(0)
 
 def main():
