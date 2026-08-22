@@ -108,7 +108,7 @@ Por defecto, `faststream` incluye una clave de acceso de respaldo para funcionar
 | **Apagado Remoto desde Web** | ✅ **1-Click (`🛑 Apagar Servidor`)** | ❌ Solo `Ctrl+C` en consola | ❌ Solo `Ctrl+C` en consola |
 | **Multi-Instancia Automática** | ✅ **Auto-Port Hunting (8090, 8091...)** | ❌ Falla con `Port in use` | ❌ Falla con `Port in use` |
 | **Código QR en Consola** | ✅ **Nativo en Python Puro** | ✅ Requiere flag | ❌ No |
-| **Peso del Ejecutable** | **~89 KB** (Script autónomo único) | Binario (~15 MB) | Binario (~6 MB) |
+| **Peso del Ejecutable** | **~96 KB** (98 KB / 2,346 líneas en 1 solo archivo) | Binario (~15 MB) | Binario (~6 MB) |
 | **Propósito Principal** | **Streaming Multimedia, Auditoría y Renombrado** | **Compartir archivos y subidas** | **Servidor de archivos / WebDAV** |
 | **Reproductor de Video** | 🎬 **Cinematográfico (Glassmorphism + Tracks)** | 📄 Básico del navegador (`<video>` plano) | 📄 Básico del navegador (`<video>` plano) |
 | **Metadatos y Carátulas TMDB/IMDb** | ✅ **Automático + Buscador en vivo** | ❌ Inexistente | ❌ Inexistente |
