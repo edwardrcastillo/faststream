@@ -1869,6 +1869,7 @@ def get_or_create_audio_remux(video_path, stream_id):
             pass
 
         audio_args = ["-c:a", "copy"] if is_aac else ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+        tmp_out = out_file + ".tmp"
 
         cmd = [
             "ffmpeg", "-y", "-v", "error",
